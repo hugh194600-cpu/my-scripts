@@ -16,8 +16,8 @@ const HANGUP_DURATION = parseInt(process.env.HANGUP_DURATION || '3600', 10);
 const PET_NAME = process.env.PET_NAME || '我的弹幕宠物';
 const TASK = process.env.TASK || 'all'; // all | signin | hangup | pet
 
-// 弹幕修炼指令列表（每次随机选一个）
-const TRAIN_DANMU = ['修仙', '突破', '打坐', '修炼', '挂机'];
+// 弹幕修炼指令（固定发「修仙」）
+const TRAIN_DANMU = ['修仙'];
 // 签到弹幕指令
 const SIGNIN_DANMU = '签到';
 
