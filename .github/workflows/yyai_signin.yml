@@ -1,0 +1,27 @@
+name: 边界AI每日签到
+
+on:
+  schedule:
+    # 每天北京时间 08:30 执行（UTC 00:30）
+    - cron: '30 0 * * *'
+  workflow_dispatch:
+    # 支持手动触发
+
+jobs:
+  signin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: 执行边界AI签到
+        env:
+          YYAI_TOKEN: ${{ secrets.YYAI_TOKEN }}
+          YYAI_ACCESS_TOKEN: ${{ secrets.YYAI_ACCESS_TOKEN }}
+          YYAI_UID: ${{ secrets.YYAI_UID }}
+        run: node src/tasks/yyai_signin.js
