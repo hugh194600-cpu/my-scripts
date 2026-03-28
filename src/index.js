@@ -16,6 +16,11 @@ const HANGUP_DURATION = parseInt(process.env.HANGUP_DURATION || '3600', 10);
 const PET_NAME = process.env.PET_NAME || '我的弹幕宠物';
 const TASK = process.env.TASK || 'all'; // all | signin | hangup | pet
 
+// 随机挂机直播间列表（用于B站经验心跳，与弹幕宠物直播间不同）
+// 可通过环境变量 RANDOM_ROOMS 覆盖，格式：逗号分隔的房间号，如 "732,6,1,76"
+const RANDOM_ROOMS_RAW = process.env.RANDOM_ROOMS || '732,6,1,76,488,21452505';
+const RANDOM_ROOMS = RANDOM_ROOMS_RAW.split(',').map(s => s.trim()).filter(Boolean);
+
 // 签到弹幕指令
 const SIGNIN_DANMU = '签到';
 
@@ -364,9 +369,9 @@ async function doHangup() {
   }
 
   if (successCount > 0) {
-    console.log(`✅ 挂机修炼完成！成功发送 ${successCount}/${count} 条修炼弹幕`);
+    console.log('✅ 修仙弹幕发送成功');
   } else {
-    console.error('❌ 所有修炼弹幕均失败');
+    console.error('❌ 修仙弹幕发送失败');
     return false;
   }
 
@@ -399,7 +404,54 @@ async function doHangup() {
     console.log(`   ℹ️  修炼经验未满 (${energy.current}/${energy.full})，无需突破`);
   }
 
+  // 随机直播间心跳（获取B站直播经验）
+  await doRandomRoomHeartbeat();
+
   return true;
+}
+
+// ==============================
+// 随机直播间心跳（获取B站直播经验）
+// ==============================
+async function doRandomRoomHeartbeat() {
+  console.log('\n   💓 随机直播间心跳...');
+  // 从列表中随机选一个直播间
+  const roomId = RANDOM_ROOMS[Math.floor(Math.random() * RANDOM_ROOMS.length)];
+  console.log(`   随机选中直播间: ${roomId}（共 ${RANDOM_ROOMS.length} 个可选）`);
+
+  try {
+    // 发送直播心跳（live-trace接口）
+    const body = `room_id=${roomId}&platform=web&uuid=${generateUUID()}&ftime=${Math.floor(Date.now()/1000)}&seq=1&extra_params={"website":"bilibili","platform":"pc"}`;
+    const res = await request({
+      hostname: 'live-trace.bilibili.com',
+      path: '/xlive/data-interface/v1/x25Kn/E',
+      method: 'POST',
+      headers: {
+        ...buildHeaders({
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Referer': `https://live.bilibili.com/${roomId}`,
+          'Origin': 'https://live.bilibili.com',
+          'Content-Length': Buffer.byteLength(body)
+        })
+      }
+    }, body);
+    console.log(`   心跳返回: code=${res.code}, msg=${res.message || res.msg || ''}`);
+    if (res.code === 0) {
+      console.log(`   ✅ 直播心跳成功（直播间 ${roomId}）`);
+    } else {
+      console.warn(`   ⚠️  直播心跳失败: ${res.code}`);
+    }
+  } catch (e) {
+    console.warn(`   直播心跳异常: ${e.message}`);
+  }
+}
+
+// 生成随机UUID（心跳用）
+function generateUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
 }
 
 // ==============================
