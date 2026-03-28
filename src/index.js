@@ -272,11 +272,27 @@ async function doHangup() {
 
   if (successCount > 0) {
     console.log(`✅ 挂机修炼完成！成功发送 ${successCount}/${count} 条修炼弹幕`);
-    return true;
   } else {
     console.error('❌ 所有修炼弹幕均失败');
     return false;
   }
+
+  // 修炼后尝试突破（经验满了会触发，没满宠物系统会忽略）
+  console.log('\n   ⚡ 尝试突破（经验满则触发，未满系统会忽略）...');
+  await new Promise(r => setTimeout(r, 6000));
+  try {
+    const btRes = await sendDanmu(HANGUP_ROOM_ID, '突破');
+    console.log(`   [HTTP] 突破弹幕返回: code=${btRes.code}, msg=${btRes.message || btRes.msg || ''}`);
+    if (btRes.code === 0) {
+      console.log('   ✅ 突破弹幕发送成功（若经验已满则已突破）');
+    } else {
+      console.warn(`   ⚠️  突破弹幕失败: ${btRes.code}`);
+    }
+  } catch (e) {
+    console.warn('   突破弹幕异常:', e.message);
+  }
+
+  return true;
 }
 
 // ==============================
