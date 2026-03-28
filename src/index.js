@@ -11,10 +11,15 @@ const http = require('http');
 // ==============================
 const COOKIE = process.env.BILIBILI_COOKIE || '';
 const UID = process.env.BILIBILI_UID || '';
-const HANGUP_ROOM_ID = process.env.HANGUP_ROOM_ID || '732';
+const HANGUP_ROOM_ID = process.env.HANGUP_ROOM_ID || '5456135';  // 弹幕宠物所在直播间
 const HANGUP_DURATION = parseInt(process.env.HANGUP_DURATION || '3600', 10);
 const PET_NAME = process.env.PET_NAME || '我的弹幕宠物';
 const TASK = process.env.TASK || 'all'; // all | signin | hangup | pet
+
+// 弹幕修炼指令列表（每次随机选一个）
+const TRAIN_DANMU = ['修仙', '突破', '打坐', '修炼', '挂机'];
+// 签到弹幕指令
+const SIGNIN_DANMU = '签到';
 
 // 从 Cookie 中提取 bili_jct 作为 csrf
 function extractCsrf(cookie) {
@@ -107,6 +112,24 @@ function livePost(path, body) {
     headers: {
       ...buildHeaders({ 'Content-Type': 'application/x-www-form-urlencoded' }),
       'Content-Length': Buffer.byteLength(postData)
+    }
+  }, postData);
+}
+
+// 发直播间弹幕
+function sendDanmu(roomId, msg) {
+  const postData = `bubble=0&msg=${encodeURIComponent(msg)}&color=16777215&mode=1&fontsize=50&rnd=${Math.floor(Date.now()/1000)}&roomid=${roomId}&csrf=${CSRF}&csrf_token=${CSRF}`;
+  return request({
+    hostname: 'api.live.bilibili.com',
+    path: '/msg/send',
+    method: 'POST',
+    headers: {
+      ...buildHeaders({
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Referer': `https://live.bilibili.com/${roomId}`,
+        'Origin': 'https://live.bilibili.com',
+        'Content-Length': Buffer.byteLength(postData)
+      })
     }
   }, postData);
 }
@@ -215,112 +238,83 @@ async function doSignin() {
 }
 
 // ==============================
-// 任务2：直播挂机修炼
+// 任务2：直播挂机修炼（发弹幕）
 // ==============================
 async function doHangup() {
   console.log('\n🎯 ======== 直播挂机修炼 ========');
-  console.log(`   直播间: ${HANGUP_ROOM_ID}，时长: ${HANGUP_DURATION}s`);
+  console.log(`   直播间: ${HANGUP_ROOM_ID}`);
+  console.log(`   方式: 发送修炼弹幕指令`);
 
-  // 获取直播间真实ID
-  let realRoomId = HANGUP_ROOM_ID;
-  try {
-    const roomInfo = await apiGet(`/x/space/wbi/acc/info?mid=${AUTO_UID || ''}`);
-    console.log(`   获取用户信息: code=${roomInfo.code}`);
-  } catch (e) {
-    console.log('   获取用户信息失败，使用默认直播间');
-  }
-
-  // 发送心跳（每30秒一次）
-  const heartbeatCount = Math.floor(HANGUP_DURATION / 30);
-  const actualCount = Math.min(heartbeatCount, 10); // 最多发10次（5分钟），避免超时
-  
-  console.log(`   计划发送 ${actualCount} 次心跳`);
+  // 发送3次修炼弹幕，间隔5秒
+  const count = 3;
   let successCount = 0;
 
-  for (let i = 0; i < actualCount; i++) {
+  for (let i = 0; i < count; i++) {
     try {
-      // 发送直播心跳
-      const body = `room_id=${realRoomId}&platform=web&uuid=&csrf=${CSRF}&csrf_token=${CSRF}&visit_id=`;
-      const res = await livePost('/xlive/data-interface/v1/x25Kn/E', body);
-      
+      const msg = TRAIN_DANMU[Math.floor(Math.random() * TRAIN_DANMU.length)];
+      console.log(`   第${i+1}次发送弹幕: 「${msg}」`);
+      const res = await sendDanmu(HANGUP_ROOM_ID, msg);
+      console.log(`   [HTTP] 发弹幕返回: code=${res.code}, msg=${res.message || res.msg || ''}`);
       if (res.code === 0) {
+        console.log(`   ✅ 第${i+1}次修炼弹幕发送成功`);
         successCount++;
-        if (i === 0 || (i + 1) % 5 === 0) {
-          console.log(`   心跳 ${i + 1}/${actualCount} ✅`);
-        }
+      } else if (res.code === 10031) {
+        console.log(`   ⚠️  弹幕发送过于频繁，等待后重试`);
       } else {
-        console.warn(`   心跳 ${i + 1} 返回: code=${res.code}`);
+        console.warn(`   ⚠️  第${i+1}次失败: ${res.code} - ${res.message || ''}`);
       }
-      
-      // 间隔30秒（最后一次不等待）
-      if (i < actualCount - 1) {
-        await new Promise(r => setTimeout(r, 30000));
-      }
+      // 每次间隔6秒
+      if (i < count - 1) await new Promise(r => setTimeout(r, 6000));
     } catch (e) {
-      console.warn(`   心跳 ${i + 1} 失败: ${e.message}`);
+      console.warn(`   第${i+1}次异常: ${e.message}`);
     }
   }
 
   if (successCount > 0) {
-    console.log(`✅ 挂机完成！成功发送 ${successCount}/${actualCount} 次心跳`);
+    console.log(`✅ 挂机修炼完成！成功发送 ${successCount}/${count} 条修炼弹幕`);
     return true;
   } else {
-    console.error('❌ 所有心跳均失败');
+    console.error('❌ 所有修炼弹幕均失败');
     return false;
   }
 }
 
 // ==============================
-// 任务3：宠物成长
+// 任务3：宠物签到（发签到弹幕）
 // ==============================
 async function doPetGrowth() {
-  console.log('\n🎯 ======== 宠物成长 ========');
-  console.log(`   宠物名称: ${PET_NAME}`);
+  console.log('\n🎯 ======== 弹幕宠物签到 ========');
+  console.log(`   直播间: ${HANGUP_ROOM_ID}`);
+  console.log(`   方式: 发送「${SIGNIN_DANMU}」弹幕`);
 
   try {
-    // 获取用户经验值信息
-    const expRes = await apiGet('/x/member/web/exp/reward');
-    if (expRes.code === 0 && expRes.data) {
-      const d = expRes.data;
-      console.log('\n   📊 今日任务完成情况:');
-      console.log(`   登录签到: ${d.login ? '✅' : '❌'}`);
-      console.log(`   观看视频: ${d.watch ? '✅' : '❌'}`);
-      console.log(`   投硬币:   ${d.coins ? '✅' : '❌'}`);
-      console.log(`   分享视频: ${d.share ? '✅' : '❌'}`);
-    }
-  } catch (e) {
-    console.warn('   获取经验信息失败:', e.message);
-  }
+    const res = await sendDanmu(HANGUP_ROOM_ID, SIGNIN_DANMU);
+    console.log(`   [HTTP] 签到弹幕返回: code=${res.code}, msg=${res.message || res.msg || ''}`);
 
-  try {
-    // 获取用户等级信息
-    const navRes = await apiGet('/x/web-interface/nav');
-    if (navRes.code === 0 && navRes.data) {
-      const u = navRes.data;
-      const level = u.level_info;
-      console.log('\n   🐾 宠物状态:');
-      console.log(`   当前等级: Lv.${u.level_info?.current_level || '?'}`);
-      console.log(`   当前经验: ${level?.current_exp || '?'}`);
-      console.log(`   升级需要: ${level?.next_exp || '?'}`);
-      
-      const currentExp = level?.current_exp || 0;
-      const nextExp = level?.next_exp || 1;
-      const progress = nextExp > 0 ? Math.floor((currentExp / nextExp) * 100) : 0;
-      
-      console.log(`   升级进度: ${progress}%`);
-      console.log(`\n   🐾 ${PET_NAME} 今日成长记录:`);
-      console.log(`   签到经验: +5`);
-      console.log(`   状态: 活力满满 🌟`);
-      
-      console.log('✅ 宠物成长记录完成！');
+    if (res.code === 0) {
+      console.log('✅ 宠物签到弹幕发送成功！');
       return true;
+    } else if (res.code === 10031) {
+      console.log('⚠️  弹幕发送频繁限制，稍后重试...');
+      await new Promise(r => setTimeout(r, 10000));
+      const res2 = await sendDanmu(HANGUP_ROOM_ID, SIGNIN_DANMU);
+      if (res2.code === 0) {
+        console.log('✅ 重试成功！宠物签到弹幕已发送');
+        return true;
+      }
+      console.warn(`⚠️  重试仍失败: ${res2.code}`);
+      return false;
+    } else if (res.code === -101) {
+      console.error('❌ 未登录，Cookie 已过期');
+      return false;
+    } else {
+      console.warn(`⚠️  签到弹幕返回: ${res.code} - ${res.message || ''}`);
+      return false;
     }
   } catch (e) {
-    console.error('❌ 宠物成长记录失败:', e.message);
+    console.error('❌ 宠物签到异常：', e.message);
     return false;
   }
-  
-  return false;
 }
 
 // ==============================
