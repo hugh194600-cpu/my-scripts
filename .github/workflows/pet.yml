@@ -2,8 +2,8 @@ name: B站宠物成长
 
 on:
   schedule:
-    # 每天2次：0,12点 UTC = 北京时间 8,20点
-    - cron: '0 0,12 * * *'
+    # 每15分钟执行一次
+    - cron: '*/15 * * * *'
   workflow_dispatch:
 
 jobs:

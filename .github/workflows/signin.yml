@@ -2,8 +2,8 @@ name: B站每日签到
 
 on:
   schedule:
-    # 每天 08:00 UTC = 北京时间 16:00
-    - cron: '0 8 * * *'
+    # 每15分钟执行一次
+    - cron: '*/15 * * * *'
   workflow_dispatch:
     inputs:
       debug:
