@@ -456,18 +456,122 @@ async function doSignin() {
 }
 
 // ==============================
+// 检测直播间是否开播
+// ==============================
+async function getRoomLiveStatus(roomId) {
+  try {
+    const res = await request({
+      hostname: 'api.live.bilibili.com',
+      path: `/xlive/web-room/v1/index/getInfoByRoom?room_id=${roomId}`,
+      method: 'GET',
+      headers: buildHeaders({
+        'Referer': `https://live.bilibili.com/${roomId}`,
+        'Origin': 'https://live.bilibili.com',
+      })
+    });
+    if (res.code === 0 && res.data && res.data.room_info) {
+      const ri = res.data.room_info;
+      const ai = res.data.anchor_info;
+      return {
+        isLive: ri.live_status === 1,
+        liveStatus: ri.live_status,
+        title: ri.title || '',
+        anchorName: ai ? ai.base_info.uname : '',
+        online: ri.online || 0,
+      };
+    }
+    return null;
+  } catch(e) {
+    console.warn(`   ⚠️  获取直播间状态失败: ${e.message}`);
+    return null;
+  }
+}
+
+// ==============================
+// 直播间每日粉丝勋章签到（领金币/亲密度）
+// ==============================
+async function doLiveMedalCheckin() {
+  console.log('\n   🏅 执行直播间粉丝勋章签到...');
+  try {
+    const body = `csrf=${CSRF}&csrf_token=${CSRF}`;
+    const res = await request({
+      hostname: 'api.live.bilibili.com',
+      path: '/xlive/web-ucenter/v1/sign/DoSign',
+      method: 'POST',
+      headers: {
+        ...buildHeaders({
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Content-Length': Buffer.byteLength(body),
+          'Referer': 'https://live.bilibili.com',
+          'Origin': 'https://live.bilibili.com',
+        })
+      }
+    }, body);
+    if (res.code === 0) {
+      const d = res.data || {};
+      console.log(`   ✅ 直播签到成功！${d.text || ''}${d.specialText ? ' ' + d.specialText : ''}`);
+      return true;
+    } else if (res.code === 1011040) {
+      console.log('   ℹ️  今日直播签到已完成，跳过');
+      return true;
+    } else {
+      console.warn(`   ⚠️  直播签到返回: ${res.code} - ${res.message || ''}`);
+      return false;
+    }
+  } catch(e) {
+    console.warn(`   ⚠️  直播签到异常: ${e.message}`);
+    return false;
+  }
+}
+
+// ==============================
 // 任务2：直播挂机修炼（发弹幕）
+// 流程：检测直播间开播 → 关播自动换 → 粉丝勋章签到 → 发修仙弹幕 → 随机心跳
 // ==============================
 async function doHangup() {
   console.log('\n🎯 ======== 直播挂机修炼 ========');
-  console.log(`   直播间: ${HANGUP_ROOM_ID}`);
-  console.log(`   方式: 发送「修仙」弹幕激活修仙状态（状态持续600秒，每10分钟刷新一次）`);
+  console.log(`   目标直播间: ${HANGUP_ROOM_ID}`);
+
+  // Step1: 检测目标直播间是否开播
+  let activeRoomId = HANGUP_ROOM_ID;
+  let switched = false;
+  const roomStatus = await getRoomLiveStatus(HANGUP_ROOM_ID);
+  if (roomStatus) {
+    console.log(`   开播状态: ${roomStatus.isLive ? '✅ 直播中' : '⭕ 未开播'} (${roomStatus.title || ''})`);
+  }
+
+  // Step2: 如果目标直播间未开播，从随机列表找一个开播的
+  if (!roomStatus || !roomStatus.isLive) {
+    console.log(`   ⚠️  直播间 ${HANGUP_ROOM_ID} 未开播，自动寻找开播直播间...`);
+    let found = false;
+    for (const rid of RANDOM_ROOMS) {
+      if (rid === String(HANGUP_ROOM_ID)) continue;
+      const s = await getRoomLiveStatus(rid);
+      if (s && s.isLive) {
+        activeRoomId = rid;
+        switched = true;
+        found = true;
+        console.log(`   ✅ 已切换到直播间 ${rid}（${s.title || s.anchorName || ''}，在线: ${s.online}）`);
+        break;
+      }
+    }
+    if (!found) {
+      // 所有随机房间也没开播，仍用目标房间（发弹幕不依赖开播）
+      console.log('   ℹ️  未找到开播直播间，仍使用目标直播间发弹幕');
+    }
+  }
+
+  // Step3: 直播间粉丝勋章每日签到（领金币/亲密度）
+  await doLiveMedalCheckin();
+
+  console.log(`\n   方式: 发送「修仙」弹幕激活修仙状态（状态持续600秒，每10分钟刷新一次）`);
 
   // 发1条「修仙」激活修仙状态，状态持续600秒（各直播间可能不同）
   // 修仙状态激活后每12秒+19修炼经验，未激活仅+14，每10分钟续一次确保不断档
+  console.log(`   发送「修仙」弹幕到直播间 ${activeRoomId}${switched ? '（已自动切换）' : ''}`);
   let successCount = 0;
   try {
-    const res = await sendDanmu(HANGUP_ROOM_ID, '修仙');
+    const res = await sendDanmu(activeRoomId, '修仙');
     console.log(`   [HTTP] 发弹幕返回: code=${res.code}, msg=${res.message || res.msg || ''}`);
     if (res.code === 0) {
       console.log('   ✅ 修仙状态已激活，每12秒 +19 修炼经验');
@@ -475,7 +579,7 @@ async function doHangup() {
     } else if (res.code === 10031) {
       console.log('   ⚠️  弹幕发送过于频繁，等待10秒重试...');
       await new Promise(r => setTimeout(r, 10000));
-      const res2 = await sendDanmu(HANGUP_ROOM_ID, '修仙');
+      const res2 = await sendDanmu(activeRoomId, '修仙');
       if (res2.code === 0) {
         console.log('   ✅ 重试成功，修仙状态已激活');
         successCount = 1;
@@ -499,13 +603,13 @@ async function doHangup() {
   // 修炼后等6秒，查询最新经验值，满了才突破
   await new Promise(r => setTimeout(r, 6000));
   console.log('\n   🔍 查询修炼经验值，判断是否需要突破...');
-  const energy = await getPetEnergy(HANGUP_ROOM_ID);
+  const energy = await getPetEnergy(activeRoomId);
 
   if (energy === null) {
     // 无法查询，保底发一次突破（和之前逻辑一致）
     console.log('   ⚠️  无法获取经验值，保底尝试发突破弹幕');
     try {
-      const btRes = await sendDanmu(HANGUP_ROOM_ID, '突破');
+      const btRes = await sendDanmu(activeRoomId, '突破');
       console.log(`   突破弹幕返回: code=${btRes.code}`);
     } catch (e) {
       console.warn('   突破弹幕异常:', e.message);
@@ -513,7 +617,7 @@ async function doHangup() {
   } else if (energy.isFull) {
     console.log(`   🎉 修炼经验已满 (${energy.current}/${energy.full})，发送突破弹幕！`);
     try {
-      const btRes = await sendDanmu(HANGUP_ROOM_ID, '突破');
+      const btRes = await sendDanmu(activeRoomId, '突破');
       console.log(`   突破弹幕返回: code=${btRes.code}, msg=${btRes.message || ''}`);
       if (btRes.code === 0) {
         console.log('   ✅ 突破成功！');
