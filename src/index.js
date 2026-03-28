@@ -16,8 +16,6 @@ const HANGUP_DURATION = parseInt(process.env.HANGUP_DURATION || '3600', 10);
 const PET_NAME = process.env.PET_NAME || '我的弹幕宠物';
 const TASK = process.env.TASK || 'all'; // all | signin | hangup | pet
 
-// 弹幕修炼指令（固定发「修仙」）
-const TRAIN_DANMU = ['修仙'];
 // 签到弹幕指令
 const SIGNIN_DANMU = '签到';
 
@@ -337,31 +335,31 @@ async function doSignin() {
 async function doHangup() {
   console.log('\n🎯 ======== 直播挂机修炼 ========');
   console.log(`   直播间: ${HANGUP_ROOM_ID}`);
-  console.log(`   方式: 发送修炼弹幕指令`);
+  console.log(`   方式: 发送「修仙」弹幕激活修仙状态（每15分钟刷新一次）`);
 
-  // 发送3次修炼弹幕，间隔5秒
-  const count = 3;
+  // 只需发1条「修仙」激活修仙状态，每12秒+19经验（未激活仅+14）
   let successCount = 0;
-
-  for (let i = 0; i < count; i++) {
-    try {
-      const msg = TRAIN_DANMU[Math.floor(Math.random() * TRAIN_DANMU.length)];
-      console.log(`   第${i+1}次发送弹幕: 「${msg}」`);
-      const res = await sendDanmu(HANGUP_ROOM_ID, msg);
-      console.log(`   [HTTP] 发弹幕返回: code=${res.code}, msg=${res.message || res.msg || ''}`);
-      if (res.code === 0) {
-        console.log(`   ✅ 第${i+1}次修炼弹幕发送成功`);
-        successCount++;
-      } else if (res.code === 10031) {
-        console.log(`   ⚠️  弹幕发送过于频繁，等待后重试`);
+  try {
+    const res = await sendDanmu(HANGUP_ROOM_ID, '修仙');
+    console.log(`   [HTTP] 发弹幕返回: code=${res.code}, msg=${res.message || res.msg || ''}`);
+    if (res.code === 0) {
+      console.log('   ✅ 修仙状态已激活，每12秒 +19 修炼经验');
+      successCount = 1;
+    } else if (res.code === 10031) {
+      console.log('   ⚠️  弹幕发送过于频繁，等待10秒重试...');
+      await new Promise(r => setTimeout(r, 10000));
+      const res2 = await sendDanmu(HANGUP_ROOM_ID, '修仙');
+      if (res2.code === 0) {
+        console.log('   ✅ 重试成功，修仙状态已激活');
+        successCount = 1;
       } else {
-        console.warn(`   ⚠️  第${i+1}次失败: ${res.code} - ${res.message || ''}`);
+        console.warn(`   ⚠️  重试失败: ${res2.code}`);
       }
-      // 每次间隔6秒
-      if (i < count - 1) await new Promise(r => setTimeout(r, 6000));
-    } catch (e) {
-      console.warn(`   第${i+1}次异常: ${e.message}`);
+    } else {
+      console.warn(`   ⚠️  修仙弹幕失败: ${res.code} - ${res.message || ''}`);
     }
+  } catch (e) {
+    console.warn('   修仙弹幕异常:', e.message);
   }
 
   if (successCount > 0) {
