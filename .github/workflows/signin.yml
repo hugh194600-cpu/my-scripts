@@ -30,5 +30,7 @@ jobs:
         env:
           BILIBILI_COOKIE: ${{ secrets.BILIBILI_COOKIE }}
           BILIBILI_UID: ${{ secrets.BILIBILI_UID }}
+          QQ_MAIL_USER: ${{ secrets.QQ_MAIL_USER }}
+          QQ_MAIL_PASS: ${{ secrets.QQ_MAIL_PASS }}
           TASK: signin
         run: node src/index.js

@@ -5,6 +5,8 @@
 
 const https = require('https');
 const http = require('http');
+const net = require('net');
+const tls = require('tls');
 
 // ==============================
 // 配置读取
@@ -23,6 +25,10 @@ const RANDOM_ROOMS = RANDOM_ROOMS_RAW.split(',').map(s => s.trim()).filter(Boole
 
 // 签到弹幕指令
 const SIGNIN_DANMU = '签到';
+
+// 邮件通知配置（通过 Secrets 注入）
+const MAIL_USER = process.env.QQ_MAIL_USER || '';       // QQ邮箱地址
+const MAIL_PASS = process.env.QQ_MAIL_PASS || '';       // QQ邮箱授权码
 
 // 从 Cookie 中提取 bili_jct 作为 csrf
 function extractCsrf(cookie) {
@@ -68,6 +74,84 @@ function request(options, postData) {
     req.setTimeout(15000, () => { req.destroy(new Error('请求超时')); });
     if (postData) req.write(postData);
     req.end();
+  });
+}
+
+// ==============================
+// 发送QQ邮件通知
+// ==============================
+function sendMail(subject, body) {
+  return new Promise((resolve) => {
+    if (!MAIL_USER || !MAIL_PASS) {
+      console.log('   ℹ️  未配置邮件通知（QQ_MAIL_USER / QQ_MAIL_PASS）');
+      return resolve(false);
+    }
+
+    const from = MAIL_USER;
+    const to   = MAIL_USER; // 发给自己
+    const boundary = '----=_NodeMailer_' + Date.now();
+
+    // 构造邮件内容（Base64编码支持中文）
+    const encSubject = '=?UTF-8?B?' + Buffer.from(subject).toString('base64') + '?=';
+    const msgLines = [
+      `From: B站自动化 <${from}>`,
+      `To: ${to}`,
+      `Subject: ${encSubject}`,
+      'MIME-Version: 1.0',
+      `Content-Type: text/plain; charset=UTF-8`,
+      'Content-Transfer-Encoding: base64',
+      '',
+      Buffer.from(body).toString('base64')
+    ].join('\r\n');
+
+    // QQ邮箱 SMTP over SSL，端口 465
+    const socket = tls.connect({ host: 'smtp.qq.com', port: 465 }, () => {});
+    let step = 0;
+    let buf = '';
+
+    const send = (cmd) => socket.write(cmd + '\r\n');
+
+    socket.setTimeout(15000, () => {
+      console.warn('   ⚠️  邮件发送超时');
+      socket.destroy();
+      resolve(false);
+    });
+
+    socket.on('data', (chunk) => {
+      buf += chunk.toString();
+      if (!buf.endsWith('\n')) return;
+      const line = buf.trim();
+      buf = '';
+
+      if (step === 0 && line.startsWith('220')) {
+        send(`EHLO smtp.qq.com`); step = 1;
+      } else if (step === 1 && line.includes('250')) {
+        const auth = Buffer.from('\0' + from + '\0' + MAIL_PASS).toString('base64');
+        send(`AUTH PLAIN ${auth}`); step = 2;
+      } else if (step === 2 && line.startsWith('235')) {
+        send(`MAIL FROM:<${from}>`); step = 3;
+      } else if (step === 3 && line.startsWith('250')) {
+        send(`RCPT TO:<${to}>`); step = 4;
+      } else if (step === 4 && line.startsWith('250')) {
+        send('DATA'); step = 5;
+      } else if (step === 5 && line.startsWith('354')) {
+        socket.write(msgLines + '\r\n.\r\n'); step = 6;
+      } else if (step === 6 && line.startsWith('250')) {
+        console.log('   ✅ 邮件发送成功');
+        send('QUIT'); step = 7;
+        socket.end();
+        resolve(true);
+      } else if (line.startsWith('5') || line.startsWith('4')) {
+        console.warn(`   ⚠️  SMTP错误: ${line}`);
+        socket.destroy();
+        resolve(false);
+      }
+    });
+
+    socket.on('error', (e) => {
+      console.warn(`   ⚠️  邮件发送失败: ${e.message}`);
+      resolve(false);
+    });
   });
 }
 
@@ -273,6 +357,11 @@ async function checkLogin() {
       console.error('   4. 前往 GitHub 仓库 → Settings → Secrets → 更新 BILIBILI_COOKIE');
       console.error(`   返回码: ${res.code}`);
       console.error('🚨🚨🚨 ========================= 🚨🚨🚨');
+      // 发送邮件通知
+      await sendMail(
+        '【B站自动化】⚠️ Cookie 已失效，请及时更新',
+        `您的 B站 Cookie 已过期，自动化任务已停止运行。\n\n请按以下步骤更新：\n1. 打开浏览器，登录 bilibili.com\n2. F12 → Application → Cookies → bilibili.com\n3. 复制完整 Cookie 字符串\n4. 前往 GitHub 仓库 → Settings → Secrets → 更新 BILIBILI_COOKIE\n\n时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`
+      );
       return false;
     } else {
       console.error('');

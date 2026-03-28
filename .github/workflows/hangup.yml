@@ -27,5 +27,7 @@ jobs:
           BILIBILI_UID: ${{ secrets.BILIBILI_UID }}
           HANGUP_ROOM_ID: ${{ secrets.HANGUP_ROOM_ID }}
           HANGUP_DURATION: ${{ secrets.HANGUP_DURATION }}
+          QQ_MAIL_USER: ${{ secrets.QQ_MAIL_USER }}
+          QQ_MAIL_PASS: ${{ secrets.QQ_MAIL_PASS }}
           TASK: hangup
         run: node src/index.js
