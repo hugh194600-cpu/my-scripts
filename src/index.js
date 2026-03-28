@@ -41,14 +41,22 @@ function request(options, postData) {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
+        // 调试：打印原始响应（前200字符）
+        console.log(`   [HTTP] ${options.method} ${options.hostname}${options.path} → ${res.statusCode}`);
+        console.log(`   [RAW] ${data.substring(0, 300)}`);
         try {
-          resolve(JSON.parse(data));
+          const parsed = JSON.parse(data);
+          resolve(parsed);
         } catch (e) {
-          resolve({ raw: data });
+          console.warn(`   [WARN] 响应不是JSON: ${data.substring(0, 100)}`);
+          resolve({ raw: data, code: -999 });
         }
       });
     });
-    req.on('error', reject);
+    req.on('error', (err) => {
+      console.error(`   [ERR] 请求失败: ${err.message}`);
+      reject(err);
+    });
     req.setTimeout(15000, () => { req.destroy(new Error('请求超时')); });
     if (postData) req.write(postData);
     req.end();
@@ -154,22 +162,27 @@ async function doSignin() {
   try {
     console.log(`\n   执行签到（csrf: ${CSRF.substring(0, 6)}***）`);
     const res = await apiPost('/x/member/web/exp/reward', `csrf=${CSRF}`);
-    console.log(`   签到返回: code=${res.code}, msg=${res.message}`);
+    const code = res.code;
+    const msg = res.message || res.msg || '';
+    console.log(`   签到返回: code=${code}, msg=${msg}`);
     
-    if (res.code === 0) {
+    if (code === 0) {
       console.log('✅ 签到成功！每日登录 +5 经验');
       return true;
-    } else if (res.code === -111) {
+    } else if (code === -111) {
       console.error('❌ csrf 验证失败！请检查 Cookie 中的 bili_jct 字段');
       return false;
-    } else if (res.code === -101) {
+    } else if (code === -101) {
       console.error('❌ 账号未登录，Cookie 已过期');
       return false;
-    } else if (res.code === 20001) {
+    } else if (code === 20001) {
       console.log('ℹ️  今日已签到，无需重复');
       return true;
+    } else if (code === -999) {
+      console.error('❌ 响应解析失败，请查看 [RAW] 原始响应');
+      return false;
     } else {
-      console.warn(`⚠️  签到返回: ${res.code} - ${res.message}`);
+      console.warn(`⚠️  签到返回: ${code} - ${msg}`);
       return false;
     }
   } catch (e) {
