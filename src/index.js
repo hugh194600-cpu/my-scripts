@@ -335,9 +335,10 @@ async function doSignin() {
 async function doHangup() {
   console.log('\n🎯 ======== 直播挂机修炼 ========');
   console.log(`   直播间: ${HANGUP_ROOM_ID}`);
-  console.log(`   方式: 发送「修仙」弹幕激活修仙状态（每15分钟刷新一次）`);
+  console.log(`   方式: 发送「修仙」弹幕激活修仙状态（状态持续600秒，每10分钟刷新一次）`);
 
-  // 只需发1条「修仙」激活修仙状态，每12秒+19经验（未激活仅+14）
+  // 发1条「修仙」激活修仙状态，状态持续600秒（各直播间可能不同）
+  // 修仙状态激活后每12秒+19修炼经验，未激活仅+14，每10分钟续一次确保不断档
   let successCount = 0;
   try {
     const res = await sendDanmu(HANGUP_ROOM_ID, '修仙');
