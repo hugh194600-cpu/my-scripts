@@ -541,8 +541,20 @@ async function doRandomRoomHeartbeat() {
   console.log(`   随机选中直播间: ${roomId}（共 ${RANDOM_ROOMS.length} 个可选）`);
 
   try {
-    // 发送直播心跳（live-trace接口）
-    const body = `room_id=${roomId}&platform=web&uuid=${generateUUID()}&ftime=${Math.floor(Date.now()/1000)}&seq=1&extra_params={"website":"bilibili","platform":"pc"}`;
+    const ts = Math.floor(Date.now() / 1000);
+    const uuid = generateUUID();
+    // B站直播心跳接口，id=roomId，必填字段
+    const body = [
+      `id=${roomId}`,
+      `device=web`,
+      `ts=${ts}`,
+      `is_patch=0`,
+      `heart_beat=[]`,
+      `ua=Mozilla%2F5.0+(Windows+NT+10.0%3B+Win64%3B+x64)+AppleWebKit%2F537.36`,
+      `csrf_token=${CSRF}`,
+      `csrf=${CSRF}`,
+      `visit_id=${uuid}`
+    ].join('&');
     const res = await request({
       hostname: 'live-trace.bilibili.com',
       path: '/xlive/data-interface/v1/x25Kn/E',
@@ -560,7 +572,7 @@ async function doRandomRoomHeartbeat() {
     if (res.code === 0) {
       console.log(`   ✅ 直播心跳成功（直播间 ${roomId}）`);
     } else {
-      console.warn(`   ⚠️  直播心跳失败: ${res.code}`);
+      console.warn(`   ⚠️  直播心跳失败: ${res.code} - ${res.message || res.msg || ''}`);
     }
   } catch (e) {
     console.warn(`   直播心跳异常: ${e.message}`);
