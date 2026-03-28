@@ -116,6 +116,100 @@ function livePost(path, body) {
   }, postData);
 }
 
+// ==============================
+// 查询宠物修炼经验值
+// 流程：直播间页面 → game_id → panel_url(token) → 解析经验值
+// ==============================
+async function getPetEnergy(roomId) {
+  try {
+    // Step1: 从直播间页面提取 game_id
+    const liveHtml = await new Promise((resolve, reject) => {
+      const req = https.request({
+        hostname: 'live.bilibili.com',
+        path: `/${roomId}`,
+        method: 'GET',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Cookie': COOKIE
+        }
+      }, res => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => resolve(data));
+      });
+      req.on('error', reject);
+      req.setTimeout(15000, () => req.destroy(new Error('超时')));
+      req.end();
+    });
+    const gameIdMatch = liveHtml.match(/"game_id"\s*:\s*"?(\d+)"?/);
+    if (!gameIdMatch) {
+      console.log('   ⚠️  未找到 game_id，可能直播间未开播或接口变更');
+      return null;
+    }
+    const gameId = gameIdMatch[1];
+    console.log(`   game_id: ${gameId}`);
+
+    // Step2: 获取带 token 的 panel_url
+    const panelRes = await request({
+      hostname: 'api.live.bilibili.com',
+      path: `/xlive/open-platform/v1/game/getAppCustomPanel?game_id=${gameId}`,
+      method: 'GET',
+      headers: buildHeaders({ 'Referer': `https://live.bilibili.com/${roomId}` })
+    });
+    const panelUrl = panelRes?.data?.panel_url || panelRes?.data?.list?.[0]?.panel_url;
+    if (!panelUrl || !panelUrl.includes('heikeyun')) {
+      console.log(`   ⚠️  未获取到宠物 panel_url，返回: ${JSON.stringify(panelRes?.data)}`);
+      return null;
+    }
+    console.log(`   panel_url 已获取`);
+
+    // Step3: 访问宠物面板页面，解析经验值
+    const urlObj = new URL(panelUrl);
+    const panelHtml = await new Promise((resolve, reject) => {
+      const req = https.request({
+        hostname: urlObj.hostname,
+        path: urlObj.pathname + urlObj.search,
+        method: 'GET',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Referer': `https://live.bilibili.com/${roomId}`
+        }
+      }, res => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => resolve(data));
+      });
+      req.on('error', reject);
+      req.setTimeout(15000, () => req.destroy(new Error('超时')));
+      req.end();
+    });
+
+    // 解析 当前修炼值 和 满级修炼值
+    const curMatch  = panelHtml.match(/id="lblUserEnergy2"[^>]*>([^<]+)</);
+    const fullMatch = panelHtml.match(/id="lblUserEnergyDown"[^>]*>([^<]+)</);
+    const levelMatch = panelHtml.match(/id="lblUserLevel"[^>]*>([^<]+)</);
+    const levelNameMatch = panelHtml.match(/id="lblUserLevelName"[^>]*>([^<]+)</);
+
+    if (!curMatch || !fullMatch) {
+      console.log('   ⚠️  无法从面板页面解析经验值（可能面板格式变更）');
+      return null;
+    }
+
+    const current = parseInt(curMatch[1].trim(), 10);
+    const full    = parseInt(fullMatch[1].trim(), 10);
+    const level   = levelMatch ? levelMatch[1].trim() : '?';
+    const levelName = levelNameMatch ? levelNameMatch[1].trim() : '?';
+
+    console.log(`   🐾 宠物状态: Lv.${level} ${levelName}`);
+    console.log(`   ⚡ 修炼经验: ${current} / ${full} (${Math.floor(current/full*100)}%)`);
+
+    return { current, full, isFull: current >= full };
+  } catch (e) {
+    console.warn(`   ⚠️  查询宠物经验异常: ${e.message}`);
+    return null;
+  }
+}
+
 // 发直播间弹幕
 function sendDanmu(roomId, msg) {
   const postData = `bubble=0&msg=${encodeURIComponent(msg)}&color=16777215&mode=1&fontsize=50&rnd=${Math.floor(Date.now()/1000)}&roomid=${roomId}&csrf=${CSRF}&csrf_token=${CSRF}`;
@@ -277,19 +371,33 @@ async function doHangup() {
     return false;
   }
 
-  // 修炼后尝试突破（经验满了会触发，没满宠物系统会忽略）
-  console.log('\n   ⚡ 尝试突破（经验满则触发，未满系统会忽略）...');
+  // 修炼后等6秒，查询最新经验值，满了才突破
   await new Promise(r => setTimeout(r, 6000));
-  try {
-    const btRes = await sendDanmu(HANGUP_ROOM_ID, '突破');
-    console.log(`   [HTTP] 突破弹幕返回: code=${btRes.code}, msg=${btRes.message || btRes.msg || ''}`);
-    if (btRes.code === 0) {
-      console.log('   ✅ 突破弹幕发送成功（若经验已满则已突破）');
-    } else {
-      console.warn(`   ⚠️  突破弹幕失败: ${btRes.code}`);
+  console.log('\n   🔍 查询修炼经验值，判断是否需要突破...');
+  const energy = await getPetEnergy(HANGUP_ROOM_ID);
+
+  if (energy === null) {
+    // 无法查询，保底发一次突破（和之前逻辑一致）
+    console.log('   ⚠️  无法获取经验值，保底尝试发突破弹幕');
+    try {
+      const btRes = await sendDanmu(HANGUP_ROOM_ID, '突破');
+      console.log(`   突破弹幕返回: code=${btRes.code}`);
+    } catch (e) {
+      console.warn('   突破弹幕异常:', e.message);
     }
-  } catch (e) {
-    console.warn('   突破弹幕异常:', e.message);
+  } else if (energy.isFull) {
+    console.log(`   🎉 修炼经验已满 (${energy.current}/${energy.full})，发送突破弹幕！`);
+    try {
+      const btRes = await sendDanmu(HANGUP_ROOM_ID, '突破');
+      console.log(`   突破弹幕返回: code=${btRes.code}, msg=${btRes.message || ''}`);
+      if (btRes.code === 0) {
+        console.log('   ✅ 突破成功！');
+      }
+    } catch (e) {
+      console.warn('   突破弹幕异常:', e.message);
+    }
+  } else {
+    console.log(`   ℹ️  修炼经验未满 (${energy.current}/${energy.full})，无需突破`);
   }
 
   return true;
