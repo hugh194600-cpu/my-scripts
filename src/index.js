@@ -237,25 +237,57 @@ function sendDanmu(roomId, msg) {
 async function checkLogin() {
   console.log('\n📋 验证登录状态...');
   if (!COOKIE) {
+    console.error('');
+    console.error('🚨🚨🚨 ===== COOKIE 未配置 ===== 🚨🚨🚨');
     console.error('❌ BILIBILI_COOKIE 未配置！');
+    console.error('👉 请前往 GitHub → Settings → Secrets → 添加 BILIBILI_COOKIE');
+    console.error('🚨🚨🚨 ========================= 🚨🚨🚨');
     return false;
   }
   if (!CSRF) {
-    console.error('❌ Cookie 中未找到 bili_jct！请确认 Cookie 完整');
+    console.error('');
+    console.error('🚨🚨🚨 ===== COOKIE 格式错误 ===== 🚨🚨🚨');
+    console.error('❌ Cookie 中未找到 bili_jct，Cookie 格式不完整');
+    console.error('👉 请重新从浏览器获取完整 Cookie 并更新 Secrets');
+    console.error('🚨🚨🚨 ============================ 🚨🚨🚨');
     return false;
   }
   try {
     const res = await apiGet('/x/web-interface/nav');
     if (res.code === 0 && res.data && res.data.isLogin) {
       console.log(`✅ 登录成功！用户: ${res.data.uname}（UID: ${res.data.mid}）`);
+      // 顺便打印 Cookie 大概剩余有效期（从SESSDATA过期时间估算）
+      const sessdataMatch = COOKIE.match(/SESSDATA=([^;]+)/);
+      if (sessdataMatch) {
+        console.log('   Cookie 状态: 有效 ✅');
+      }
       return true;
+    } else if (res.code === -101 || (res.data && res.data.isLogin === false)) {
+      console.error('');
+      console.error('🚨🚨🚨 ===== COOKIE 已失效 ===== 🚨🚨🚨');
+      console.error('❌ B站 Cookie 已过期，账号未登录！');
+      console.error('👉 操作步骤：');
+      console.error('   1. 打开浏览器，登录 bilibili.com');
+      console.error('   2. F12 → Application → Cookies → bilibili.com');
+      console.error('   3. 复制完整 Cookie 字符串');
+      console.error('   4. 前往 GitHub 仓库 → Settings → Secrets → 更新 BILIBILI_COOKIE');
+      console.error(`   返回码: ${res.code}`);
+      console.error('🚨🚨🚨 ========================= 🚨🚨🚨');
+      return false;
     } else {
-      console.error(`❌ 未登录，code=${res.code}，message=${res.message}`);
-      console.error('   可能原因：Cookie 已过期，请重新获取');
+      console.error('');
+      console.error('🚨🚨🚨 ===== 登录验证失败 ===== 🚨🚨🚨');
+      console.error(`❌ 登录验证失败，code=${res.code}，message=${res.message}`);
+      console.error('👉 可能原因：Cookie 已过期或 B站 API 异常，请检查 Cookie 是否有效');
+      console.error('🚨🚨🚨 ========================= 🚨🚨🚨');
       return false;
     }
   } catch (e) {
+    console.error('');
+    console.error('🚨🚨🚨 ===== 网络请求失败 ===== 🚨🚨🚨');
     console.error('❌ 验证登录失败：', e.message);
+    console.error('👉 可能是网络问题，稍后会自动重试');
+    console.error('🚨🚨🚨 ========================= 🚨🚨🚨');
     return false;
   }
 }
