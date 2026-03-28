@@ -1,0 +1,4 @@
+# 本地测试用，不提交
+.env
+node_modules/
+*.log

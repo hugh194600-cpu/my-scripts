@@ -1,0 +1,31 @@
+name: B站直播挂机
+
+on:
+  schedule:
+    # 每天4次：0,6,12,18点 UTC = 北京时间 8,14,20,02点
+    - cron: '0 0,6,12,18 * * *'
+  workflow_dispatch:
+
+jobs:
+  hangup:
+    name: 直播挂机
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 执行挂机
+        env:
+          BILIBILI_COOKIE: ${{ secrets.BILIBILI_COOKIE }}
+          BILIBILI_UID: ${{ secrets.BILIBILI_UID }}
+          HANGUP_ROOM_ID: ${{ secrets.HANGUP_ROOM_ID }}
+          HANGUP_DURATION: ${{ secrets.HANGUP_DURATION }}
+          TASK: hangup
+        run: node src/index.js

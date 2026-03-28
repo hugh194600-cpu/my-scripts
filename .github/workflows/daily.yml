@@ -1,0 +1,37 @@
+name: B站全部任务
+
+on:
+  schedule:
+    # 每天 08:30 UTC = 北京时间 16:30
+    - cron: '30 8 * * *'
+  workflow_dispatch:
+    inputs:
+      task:
+        description: '执行任务 (all/signin/hangup/pet)'
+        required: false
+        default: 'all'
+
+jobs:
+  all-tasks:
+    name: 全部任务
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 执行所有任务
+        env:
+          BILIBILI_COOKIE: ${{ secrets.BILIBILI_COOKIE }}
+          BILIBILI_UID: ${{ secrets.BILIBILI_UID }}
+          HANGUP_ROOM_ID: ${{ secrets.HANGUP_ROOM_ID }}
+          HANGUP_DURATION: ${{ secrets.HANGUP_DURATION }}
+          PET_NAME: ${{ secrets.PET_NAME }}
+          TASK: ${{ github.event.inputs.task || 'all' }}
+        run: node src/index.js

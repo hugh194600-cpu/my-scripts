@@ -1,0 +1,17 @@
+{
+  "name": "bilibili-automation",
+  "version": "2.0.0",
+  "description": "B站自动化工具 - 签到/挂机/宠物成长",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "signin": "TASK=signin node src/index.js",
+    "hangup": "TASK=hangup node src/index.js",
+    "pet": "TASK=pet node src/index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["bilibili", "automation", "github-actions"],
+  "license": "MIT"
+}

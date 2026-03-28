@@ -1,0 +1,34 @@
+name: B站每日签到
+
+on:
+  schedule:
+    # 每天 08:00 UTC = 北京时间 16:00
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: '是否开启调试模式'
+        required: false
+        default: 'false'
+
+jobs:
+  signin:
+    name: 每日签到
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 执行签到
+        env:
+          BILIBILI_COOKIE: ${{ secrets.BILIBILI_COOKIE }}
+          BILIBILI_UID: ${{ secrets.BILIBILI_UID }}
+          TASK: signin
+        run: node src/index.js

@@ -1,0 +1,30 @@
+name: B站宠物成长
+
+on:
+  schedule:
+    # 每天2次：0,12点 UTC = 北京时间 8,20点
+    - cron: '0 0,12 * * *'
+  workflow_dispatch:
+
+jobs:
+  pet:
+    name: 宠物成长
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 执行宠物成长
+        env:
+          BILIBILI_COOKIE: ${{ secrets.BILIBILI_COOKIE }}
+          BILIBILI_UID: ${{ secrets.BILIBILI_UID }}
+          PET_NAME: ${{ secrets.PET_NAME }}
+          TASK: pet
+        run: node src/index.js
