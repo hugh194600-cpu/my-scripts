@@ -24,4 +24,6 @@ jobs:
           YYAI_TOKEN: ${{ secrets.YYAI_TOKEN }}
           YYAI_ACCESS_TOKEN: ${{ secrets.YYAI_ACCESS_TOKEN }}
           YYAI_UID: ${{ secrets.YYAI_UID }}
+          QQ_MAIL_USER: ${{ secrets.QQ_MAIL_USER }}
+          QQ_MAIL_PASS: ${{ secrets.QQ_MAIL_PASS }}
         run: node src/tasks/yyai_signin.js

@@ -129,41 +129,54 @@ async function doSignin() {
 
     console.log('   返回数据:', JSON.stringify(res));
 
+    const msg = res.msg || res.message || '';
+
     // 判断签到结果
-    if (res.code === 0 || res.code === 200 || res.success === true) {
-      const points = res.data?.points || res.data?.score || res.data?.coin || '';
-      console.log(`   ✅ 签到成功！${points ? '获得积分: ' + points : ''}`);
-      return true;
-    } else if (
-      res.code === 1 ||
-      (res.msg && (res.msg.includes('已签到') || res.msg.includes('already') || res.msg.includes('重复')))
-    ) {
+    // 成功：code 0/1/200，或 success=true，或 msg 含"成功"/"sign"
+    const isSuccess =
+      res.code === 0 || res.code === 1 || res.code === 200 ||
+      res.success === true ||
+      (typeof msg === 'string' && (msg.includes('成功') || msg.toLowerCase().includes('success')));
+
+    // 已签到：msg 含"已签到"/"already"/"重复"，或 code 为特定重复签到码
+    const isAlready =
+      (typeof msg === 'string' && (
+        msg.includes('已签到') || msg.includes('已经签到') ||
+        msg.toLowerCase().includes('already') || msg.includes('重复')
+      ));
+
+    if (isAlready) {
       console.log('   ℹ️  今日已签到，跳过');
       return true;
+    } else if (isSuccess) {
+      const points = res.data?.points || res.data?.score || res.data?.coin ||
+                     res.data?.integral || res.data?.exp || '';
+      console.log(`   ✅ 签到成功！${points ? '获得积分: ' + points : ''}`);
+      return true;
     } else {
-      const msg = res.msg || res.message || JSON.stringify(res);
-      console.warn(`   ⚠️  签到失败: code=${res.code}, msg=${msg}`);
+      const failMsg = msg || JSON.stringify(res);
+      console.warn(`   ⚠️  签到失败: code=${res.code}, msg=${failMsg}`);
 
       // 判断是否 token 失效（401 / unauthorized / token相关错误）
       const isTokenExpired =
         res.code === 401 ||
-        (typeof msg === 'string' && (
-          msg.includes('token') || msg.includes('未登录') ||
-          msg.includes('登录') || msg.includes('unauthorized') ||
-          msg.includes('invalid') || msg.includes('expire')
+        (typeof failMsg === 'string' && (
+          failMsg.includes('token') || failMsg.includes('未登录') ||
+          failMsg.includes('登录') || failMsg.toLowerCase().includes('unauthorized') ||
+          failMsg.toLowerCase().includes('invalid') || failMsg.toLowerCase().includes('expire')
         ));
 
       if (isTokenExpired) {
         console.error('   🚨 access-token 已失效，发送邮件提醒...');
         await sendMail(
           '【边界AI签到】⚠️ access-token 已失效，请及时更新',
-          `边界AI平台 (yyai8.com) 自动签到失败，原因：access-token 已过期。\n\n请按以下步骤更新：\n1. 打开浏览器，登录 https://yyai8.com/signIn\n2. F12 → Network → 点击"立即签到"\n3. 找到 POST do 请求 → Request Headers\n4. 复制 access-token 的值\n5. 前往 GitHub 仓库 → Settings → Secrets → 更新 YYAI_ACCESS_TOKEN\n\n错误信息：${msg}\n时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`
+          `边界AI平台 (yyai8.com) 自动签到失败，原因：access-token 已过期。\n\n请按以下步骤更新：\n1. 打开浏览器，登录 https://yyai8.com/signIn\n2. F12 → Network → 点击"立即签到"\n3. 找到 POST do 请求 → Request Headers\n4. 复制 access-token 的值\n5. 前往 GitHub 仓库 → Settings → Secrets → 更新 YYAI_ACCESS_TOKEN\n\n错误信息：${failMsg}\n时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`
         );
       } else {
         // 普通失败也发邮件
         await sendMail(
           '【边界AI签到】⚠️ 今日签到失败',
-          `边界AI平台 (yyai8.com) 自动签到失败。\n\n错误信息：code=${res.code}, msg=${msg}\n时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`
+          `边界AI平台 (yyai8.com) 自动签到失败。\n\n错误信息：code=${res.code}, msg=${failMsg}\n时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`
         );
       }
       return false;
