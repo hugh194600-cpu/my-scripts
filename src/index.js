@@ -2124,8 +2124,14 @@ exports.main_handler = main_handler;
 
 // 本地运行支持
 if (require.main === module) {
-  main().catch(err => {
-    console.error('❌ 未处理的错误:', err);
-    process.exit(1);
-  });
+  main()
+    .then(summary => {
+      if (!summary || summary.success !== true) {
+        process.exit(1);
+      }
+    })
+    .catch(err => {
+      console.error('❌ 未处理的错误:', err);
+      process.exit(1);
+    });
 }
