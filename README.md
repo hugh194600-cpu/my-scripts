@@ -1,17 +1,15 @@
 # B站自动化工具 🚀
 
-[![B站每日签到](https://github.com/hugh194600-cpu/bilibili-automation/actions/workflows/signin.yml/badge.svg)](https://github.com/hugh194600-cpu/bilibili-automation/actions/workflows/signin.yml)
-[![B站弹幕宠物挂机](https://github.com/hugh194600-cpu/bilibili-automation/actions/workflows/hangup.yml/badge.svg)](https://github.com/hugh194600-cpu/bilibili-automation/actions/workflows/hangup.yml)
-[![边界AI签到](https://github.com/hugh194600-cpu/bilibili-automation/actions/workflows/yyai_signin.yml/badge.svg)](https://github.com/hugh194600-cpu/bilibili-automation/actions/workflows/yyai_signin.yml)
+[![B站弹幕宠物挂机](https://github.com/hugh194600-cpu/my-scripts/actions/workflows/hangup.yml/badge.svg)](https://github.com/hugh194600-cpu/my-scripts/actions/workflows/hangup.yml)
+[![边界AI签到](https://github.com/hugh194600-cpu/my-scripts/actions/workflows/yyai_signin.yml/badge.svg)](https://github.com/hugh194600-cpu/my-scripts/actions/workflows/yyai_signin.yml)
 
-基于 **GitHub Actions** 的自动化工具，完全免费，无需云函数。
+基于 **GitHub Actions** 的自动化工具，当前仅保留已实测有效的两条链路：**B站弹幕宠物挂机修炼** 与 **边界AI签到**。
 
 ## ✨ 功能
 
 | 工作流 | 触发时间 | 功能 |
 |--------|---------|------|
-| B站每日签到 | 每天 08:00 / 10:00（北京时间） | 自动签到，Cookie 失效时发邮件通知 |
-| 弹幕宠物挂机修炼 | 每 10 分钟 | 扫描开播的弹幕宠物直播间，发修炼指令，校验 +19 经验，满经验自动突破 |
+| 弹幕宠物挂机修炼 | 每 10 分钟 | 扫描开播的弹幕宠物直播间，发修炼指令，校验经验增量，满经验自动突破 |
 | 边界AI签到 | 每天 08:05 / 10:05（北京时间） | yyai8.com 每日签到，token 失效时发邮件通知 |
 
 ## 🚀 快速部署
@@ -36,7 +34,7 @@
 | Secret 名称 | 说明 | 默认值 |
 |------------|------|-------|
 | `PET_PRIORITY_ROOMS` | 历史确认打出过 +19 的优先房间号，逗号分隔 | `1788399444` |
-| `HANGUP_ROOM_ID` | 备选挂机房间 | `5456135` |
+| `HANGUP_ROOM_ID` | 备选挂机房间 | `1788399444` |
 | `RANDOM_ROOMS` | 随机心跳直播间列表，逗号分隔 | `732,6,1,76,488,21452505` |
 
 **邮件通知（可选但推荐）：**
@@ -57,9 +55,10 @@
 ### 第三步：手动触发测试
 
 1. 进入 **Actions** 标签页
-2. 左侧选择 **B站每日签到**
+2. 左侧选择 **B站弹幕宠物挂机修炼**
 3. 点击 **Run workflow** → **Run workflow**
-4. 等待完成后查看日志确认
+4. 等待完成后查看日志，重点确认经验增量是否达到有效修炼档位
+5. 如需验证边界AI，再单独手动触发 **边界AI每日签到**
 
 ## 🔧 挂机修炼说明
 
@@ -73,8 +72,8 @@
 ## ⚙️ 本地运行
 
 ```bash
-git clone https://github.com/hugh194600-cpu/bilibili-automation.git
-cd bilibili-automation
+git clone https://github.com/hugh194600-cpu/my-scripts.git
+cd my-scripts
 npm install
 cp .env.example .env
 # 编辑 .env 填入 BILIBILI_COOKIE 等配置
@@ -92,10 +91,11 @@ node src/index.js
 
 ### v2.0.0 (2026-04-02)
 - ✅ 从腾讯云 SCF 全面迁移到 GitHub Actions（完全免费）
+- ✅ 仅保留已实测有效的两条工作流：弹幕宠物挂机修炼 + 边界AI签到
 - ✅ 修炼触发链路：宠物面板 + 直播弹幕双重保障
 - ✅ 12 秒增量校验确认修炼真实有效（+19 才算成功）
 - ✅ 满经验自动突破（面板优先，弹幕兜底）
 - ✅ 返回值内置触发顺序 / 实际执行路径 / 突破链路可见
 
 ### v1.0.0 (2026-03-24)
-- ✅ 初始版本：自动签到 + 挂机修炼 + GitHub Actions 集成
+- ✅ 初始版本：自动化任务 + 挂机修炼 + GitHub Actions 集成

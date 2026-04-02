@@ -1270,7 +1270,7 @@ async function checkLogin() {
       console.error('   1. 打开浏览器，登录 bilibili.com');
       console.error('   2. F12 → Application → Cookies → bilibili.com');
       console.error('   3. 复制完整 Cookie 字符串');
-      console.error('   4. 前往腾讯云 SCF → bilibili-hangup → 函数配置 → 环境变量 → 更新 BILIBILI_COOKIE');
+      console.error('   4. 前往 GitHub 仓库 → Settings → Secrets and variables → Actions → 更新 BILIBILI_COOKIE');
       console.error(`   返回码: ${res.code}`);
       console.error('🚨🚨🚨 ========================= 🚨🚨🚨');
       // 发送邮件通知
@@ -2057,7 +2057,7 @@ async function main() {
   RUN_DETAILS.login = { success: loggedIn };
   if (!loggedIn) {
     console.error('\n❌ 登录验证失败，退出执行');
-    console.error('请检查: 1) Cookie 是否正确配置到腾讯云 SCF 环境变量 2) Cookie 是否已过期');
+    console.error('请检查: 1) Cookie 是否正确配置到 GitHub Actions Secrets 2) Cookie 是否已过期');
     throw new Error('登录验证失败');
   }
 
@@ -2096,9 +2096,9 @@ async function main() {
 
 
 // ==============================
-// 腾讯云 SCF 导出处理器
+// 兼容旧版云函数入口
 // ==============================
-// 腾讯云需要 main_handler 作为入口
+// 仅为兼容历史调用保留 main_handler；当前主运行方式是 GitHub Actions
 async function main_handler(event, context) {
   try {
     const summary = await main();
