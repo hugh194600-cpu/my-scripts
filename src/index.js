@@ -883,37 +883,106 @@ function simplifyPetEnergy(energy) {
   };
 }
 
-function evaluateCultivationGain(beforeEnergy, afterEnergy) {
+function calculateEnergyDelta(fromEnergy, toEnergy) {
+  if (!fromEnergy || !toEnergy) return null;
+
+  const fromCurrent = Number(fromEnergy.current);
+  const toCurrent = Number(toEnergy.current);
+  if (!Number.isFinite(fromCurrent) || !Number.isFinite(toCurrent)) {
+    return null;
+  }
+
+  return toCurrent - fromCurrent;
+}
+
+function isIdleLikeGain(delta) {
+  return Number.isFinite(delta) && delta >= 14 && delta % 14 === 0;
+}
+
+function evaluateCultivationGain(beforeEnergy, afterEnergy, options = {}) {
+  const round = Math.max(1, Number(options.round || 1));
+  const maxRounds = Math.max(round, Number(options.maxRounds || 1));
+  const waitSeconds = Math.max(1, Math.round(Number(options.waitMs || 12000) / 1000));
+  const totalWaitSeconds = waitSeconds * round;
+  const previousEnergy = options.previousEnergy || beforeEnergy;
+  const windowDelta = calculateEnergyDelta(previousEnergy, afterEnergy);
+
   if (!beforeEnergy || !afterEnergy) {
     return {
       verified: false,
       delta: null,
+      windowDelta,
+      round,
+      maxRounds,
+      waitSeconds,
+      totalWaitSeconds,
       expectedActiveGain: 19,
       expectedIdleGain: 14,
-      reason: '未拿到完整的前后经验值，无法完成 12 秒增量校验'
+      idleLike: false,
+      delayedLike: false,
+      needsAnotherCheck: round < maxRounds,
+      reason: round < maxRounds
+        ? `第 ${round} 次 ${waitSeconds} 秒复查未拿到完整经验，继续做下一次复查排除显示滞后`
+        : `两次 ${waitSeconds} 秒复查后仍未拿到完整经验，无法确认修炼是否真实生效`
     };
   }
 
-  const beforeCurrent = Number(beforeEnergy.current);
-  const afterCurrent = Number(afterEnergy.current);
-  if (!Number.isFinite(beforeCurrent) || !Number.isFinite(afterCurrent)) {
+  const delta = calculateEnergyDelta(beforeEnergy, afterEnergy);
+  if (!Number.isFinite(delta)) {
     return {
       verified: false,
       delta: null,
+      windowDelta,
+      round,
+      maxRounds,
+      waitSeconds,
+      totalWaitSeconds,
       expectedActiveGain: 19,
       expectedIdleGain: 14,
-      reason: '经验值格式异常，无法完成 12 秒增量校验'
+      idleLike: false,
+      delayedLike: false,
+      needsAnotherCheck: round < maxRounds,
+      reason: round < maxRounds
+        ? `第 ${round} 次 ${waitSeconds} 秒复查经验格式异常，继续做下一次复查排除显示滞后`
+        : `两次 ${waitSeconds} 秒复查后经验格式仍异常，无法确认修炼是否真实生效`
     };
   }
 
-  const delta = afterCurrent - beforeCurrent;
-  if (delta >= 19) {
+  if (delta >= 19 && !isIdleLikeGain(delta)) {
     return {
       verified: true,
       delta,
+      windowDelta,
+      round,
+      maxRounds,
+      waitSeconds,
+      totalWaitSeconds,
       expectedActiveGain: 19,
       expectedIdleGain: 14,
-      reason: `12 秒后经验 +${delta}，达到修炼成功档位`
+      idleLike: false,
+      delayedLike: false,
+      needsAnotherCheck: false,
+      reason: `第 ${round} 次 ${waitSeconds} 秒复查后累计经验 +${delta}，且不是 +14 的倍数，可确认修炼加成已生效`
+    };
+  }
+
+  if (delta >= 19 && isIdleLikeGain(delta)) {
+    return {
+      verified: false,
+      delta,
+      windowDelta,
+      round,
+      maxRounds,
+      waitSeconds,
+      totalWaitSeconds,
+      expectedActiveGain: 19,
+      expectedIdleGain: 14,
+      idleLike: true,
+      delayedLike: true,
+      needsAnotherCheck: round < maxRounds,
+      reason: round < maxRounds
+        ? `第 ${round} 次 ${waitSeconds} 秒复查后累计经验 +${delta}，但属于 +14 的倍数，更像经验显示滞后；继续做下一次复查`
+        : `两次 ${waitSeconds} 秒复查后累计经验 +${delta}，仍属于 +14 的倍数，更像滞后显示的基础在线收益，未确认修炼加成生效`
     };
   }
 
@@ -921,24 +990,45 @@ function evaluateCultivationGain(beforeEnergy, afterEnergy) {
     return {
       verified: false,
       delta,
+      windowDelta,
+      round,
+      maxRounds,
+      waitSeconds,
+      totalWaitSeconds,
       expectedActiveGain: 19,
       expectedIdleGain: 14,
-      reason: `12 秒后经验仅 +${delta}，更像基础在线收益，未确认修炼加成生效`
+      idleLike: true,
+      delayedLike: false,
+      needsAnotherCheck: round < maxRounds,
+      reason: round < maxRounds
+        ? `第 ${round} 次 ${waitSeconds} 秒复查后累计经验仅 +${delta}，更像基础在线收益；继续做下一次复查`
+        : `两次 ${waitSeconds} 秒复查后累计经验仅 +${delta}，仍未达到修炼成功所需的有效增量`
     };
   }
 
   return {
     verified: false,
     delta,
+    windowDelta,
+    round,
+    maxRounds,
+    waitSeconds,
+    totalWaitSeconds,
     expectedActiveGain: 19,
     expectedIdleGain: 14,
-    reason: `12 秒后经验仅 +${delta}，未达到正常修炼成功应有的 +19`
+    idleLike: false,
+    delayedLike: false,
+    needsAnotherCheck: round < maxRounds,
+    reason: round < maxRounds
+      ? `第 ${round} 次 ${waitSeconds} 秒复查后累计经验仅 +${delta}，继续做下一次复查确认是否存在显示滞后`
+      : `两次 ${waitSeconds} 秒复查后累计经验仅 +${delta}，未达到修炼成功应有的有效增量`
   };
 }
 
 async function triggerCultivationAttempt(roomId, roomInfo, triggerConfig, options = {}) {
   const energyDebug = options.energyDebug && typeof options.energyDebug === 'object' ? options.energyDebug : null;
   const waitMs = Number(options.waitMs || 12000);
+  const maxVerifyRounds = Math.max(1, Number(options.maxVerifyRounds || 2));
   const beforeEnergyRaw = await getPetEnergy(roomId, { silent: true });
   const detail = {
     method: triggerConfig.method,
@@ -954,7 +1044,8 @@ async function triggerCultivationAttempt(roomId, roomInfo, triggerConfig, option
     energyBefore: simplifyPetEnergy(beforeEnergyRaw),
     heartbeatAfter: null,
     energyAfter: null,
-    gainCheck: null
+    gainCheck: null,
+    verificationChecks: []
   };
 
   if (detail.energyBefore) {
@@ -990,22 +1081,49 @@ async function triggerCultivationAttempt(roomId, roomInfo, triggerConfig, option
     return detail;
   }
 
-  console.log(`   ⏱️  等待 ${Math.round(waitMs / 1000)} 秒后复查经验...`);
-  await new Promise(r => setTimeout(r, waitMs));
+  let previousEnergyRaw = beforeEnergyRaw;
 
-  detail.heartbeatAfter = await sendActiveRoomHeartbeat(roomInfo || roomId);
-  console.log(`   ${triggerConfig.label}后心跳: ${detail.heartbeatAfter.success ? '✅ 成功' : '⚠️ 失败'} (${detail.heartbeatAfter.method || 'none'} / ${detail.heartbeatAfter.response?.code})`);
+  for (let round = 1; round <= maxVerifyRounds; round++) {
+    console.log(`   ⏱️  等待 ${Math.round(waitMs / 1000)} 秒后进行第 ${round} 次经验复查...`);
+    await new Promise(r => setTimeout(r, waitMs));
 
-  const afterEnergyRaw = await getPetEnergy(roomId, { silent: true, debugTarget: energyDebug });
-  detail.energyAfter = simplifyPetEnergy(afterEnergyRaw);
-  if (detail.energyAfter) {
-    console.log(`   ${triggerConfig.label}后经验: ${detail.energyAfter.current}/${detail.energyAfter.full} | Lv.${detail.energyAfter.level} ${detail.energyAfter.levelName}`);
+    const heartbeatAfter = await sendActiveRoomHeartbeat(roomInfo || roomId);
+    detail.heartbeatAfter = heartbeatAfter;
+    console.log(`   ${triggerConfig.label}第 ${round} 次复查前心跳: ${heartbeatAfter.success ? '✅ 成功' : '⚠️ 失败'} (${heartbeatAfter.method || 'none'} / ${heartbeatAfter.response?.code})`);
+
+    const afterEnergyRaw = await getPetEnergy(roomId, { silent: true, debugTarget: energyDebug });
+    detail.energyAfter = simplifyPetEnergy(afterEnergyRaw);
+    if (detail.energyAfter) {
+      console.log(`   ${triggerConfig.label}第 ${round} 次复查后经验: ${detail.energyAfter.current}/${detail.energyAfter.full} | Lv.${detail.energyAfter.level} ${detail.energyAfter.levelName}`);
+    }
+
+    detail.gainCheck = evaluateCultivationGain(beforeEnergyRaw, afterEnergyRaw, {
+      round,
+      maxRounds: maxVerifyRounds,
+      waitMs,
+      previousEnergy: previousEnergyRaw
+    });
+    detail.verificationChecks.push({
+      round,
+      heartbeatAfter,
+      energyAfter: detail.energyAfter,
+      gainCheck: detail.gainCheck
+    });
+    detail.active = detail.gainCheck.verified;
+    detail.reason = detail.gainCheck.reason || detail.reason;
+
+    const totalDeltaText = Number.isFinite(detail.gainCheck.delta) ? `累计 +${detail.gainCheck.delta}` : '累计增量未知';
+    const windowDeltaText = Number.isFinite(detail.gainCheck.windowDelta) ? `本轮 +${detail.gainCheck.windowDelta}` : '本轮增量未知';
+    console.log(`   ${triggerConfig.label}第 ${round} 次校验: ${detail.active ? '✅ 已确认修炼成功' : '⚠️ 未确认修炼成功'} - ${totalDeltaText} / ${windowDeltaText} - ${detail.reason}`);
+
+    if (detail.active || !detail.gainCheck.needsAnotherCheck) {
+      break;
+    }
+
+    if (afterEnergyRaw) {
+      previousEnergyRaw = afterEnergyRaw;
+    }
   }
-
-  detail.gainCheck = evaluateCultivationGain(beforeEnergyRaw, afterEnergyRaw);
-  detail.active = detail.gainCheck.verified;
-  detail.reason = detail.gainCheck.reason || detail.reason;
-  console.log(`   ${triggerConfig.label}校验: ${detail.active ? '✅ 已确认修炼成功' : '⚠️ 未确认修炼成功'} - ${detail.reason}`);
 
   return detail;
 }
@@ -1657,7 +1775,7 @@ async function doHangup() {
     attempt.heartbeatBeforeDanmu = await sendActiveRoomHeartbeat(activeRoomInfo || candidateRoomId);
     console.log(`   首次心跳: ${attempt.heartbeatBeforeDanmu.success ? '✅ 成功' : '⚠️ 失败'} (${attempt.heartbeatBeforeDanmu.method || 'none'} / ${attempt.heartbeatBeforeDanmu.response?.code})`);
 
-    console.log(`\n   依次尝试宠物面板 + 真实直播弹幕，确认是否真正进入 +19 修炼档位：${candidateRoomId}`);
+    console.log(`\n   依次尝试宠物面板 + 真实直播弹幕，确认是否真正进入有效修炼档位（排除 +14 倍数滞后显示）：${candidateRoomId}`);
     attempt.hangupDanmu = {
       success: false,
       active: false,
@@ -1702,7 +1820,8 @@ async function doHangup() {
       detail.triggerExecutedOrder.push(`${candidateRoomId}:${triggerPlan.label || triggerPlan.method || ''}`);
       const triggerAttempt = await triggerCultivationAttempt(candidateRoomId, activeRoomInfo || candidateRoomId, triggerPlan, {
         energyDebug: detail.energyDebug,
-        waitMs: 12000
+        waitMs: 12000,
+        maxVerifyRounds: 2
       });
       attempt.hangupDanmu.triggers.push(triggerAttempt);
 
@@ -1744,7 +1863,7 @@ async function doHangup() {
         attempt.hangupDanmu.method = triggerAttempt.method;
         attempt.hangupDanmu.reason = triggerAttempt.reason || '';
         attempt.hangupDanmu.response = triggerAttempt.response;
-        console.warn(`   ⚠️  ${triggerPlan.label} 已触发，但 12 秒增量仍未到 +19，继续尝试下一种方式`);
+        console.warn(`   ⚠️  ${triggerPlan.label} 已触发，但两轮 12 秒复查后仍未确认有效修炼增量，继续尝试下一种方式`);
       }
     }
 
@@ -1789,7 +1908,7 @@ async function doHangup() {
 
 
     attemptedRoomIds.push(candidateRoomId);
-    attempt.switchReason = attempt.hangupDanmu.reason || '宠物面板与真实弹幕都尝试过，但 12 秒增量仍未达到 +19';
+    attempt.switchReason = attempt.hangupDanmu.reason || '宠物面板与真实弹幕都尝试过，但两轮 12 秒复查后仍未确认有效修炼增量';
     console.warn(`   ⚠️  房间 ${candidateRoomId} 未确认进入修炼状态，准备更换到下一个已开启弹幕宠物的直播间`);
 
 
@@ -1819,9 +1938,9 @@ async function doHangup() {
     if (detail.breakthrough?.success) {
       detail.reason = '本轮未确认进入修炼状态，但检测到经验已满并已触发突破升级';
     } else if (detail.breakthrough?.attempted) {
-      detail.reason = `宠物面板与真实弹幕都尝试过，但 12 秒增量仍未达到 +19；同时经验已满，但突破未成功：${detail.breakthrough.reason || '未知原因'}`;
+      detail.reason = `宠物面板与真实弹幕都尝试过，但两轮 12 秒复查后仍未确认有效修炼增量；同时经验已满，但突破未成功：${detail.breakthrough.reason || '未知原因'}`;
     } else {
-      detail.reason = '宠物面板与真实弹幕都尝试过，但 12 秒增量仍未达到 +19，已尝试切换直播间';
+      detail.reason = '宠物面板与真实弹幕都尝试过，但两轮 12 秒复查后仍未确认有效修炼增量，已尝试切换直播间';
     }
     return false;
   }
@@ -1830,14 +1949,14 @@ async function doHangup() {
   detail.success = !!detail.hangupDanmu?.active;
   if (detail.success) {
     if (detail.breakthrough?.success) {
-      detail.reason = '已通过 12 秒经验增量校验确认修炼成功，且经验已满并已触发突破升级';
+      detail.reason = '已通过最多两轮 12 秒经验复查确认修炼成功，且经验已满并已触发突破升级';
     } else if (detail.breakthrough?.attempted) {
-      detail.reason = `已通过 12 秒经验增量校验确认修炼成功，但经验已满后的突破未成功：${detail.breakthrough.reason || '未知原因'}`;
+      detail.reason = `已通过最多两轮 12 秒经验复查确认修炼成功，但经验已满后的突破未成功：${detail.breakthrough.reason || '未知原因'}`;
     } else {
-      detail.reason = '已通过 12 秒经验增量校验确认修炼成功；若未达到 +19 会自动切换到其他开启弹幕宠物的直播间';
+      detail.reason = '已通过最多两轮 12 秒经验复查确认修炼成功；若仍只出现 +14 基础收益或 +14 倍数滞后显示，会自动切换到其他开启弹幕宠物的直播间';
     }
   } else {
-    detail.reason = '12 秒经验增量未达到修炼成功档位';
+    detail.reason = '两轮 12 秒经验复查后仍未达到有效修炼成功档位';
   }
 
 
