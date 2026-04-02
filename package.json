@@ -1,22 +1,21 @@
 {
-  "name": "bilibili-automation",
-  "version": "1.0.0",
-  "description": "B站自动化工具 - 自动签到、升级、修炼",
+  "name": "my-scripts",
+  "version": "2.0.0",
+  "description": "B站弹幕宠物挂机修炼与边界AI签到脚本",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
     "dev": "node src/index.js",
-    "signin": "node src/tasks/signin.js",
     "hangup": "node src/tasks/hangup.js",
     "pet": "node src/tasks/pet.js",
-    "test": "node src/test.js"
+    "yyai:signin": "node src/tasks/yyai_signin.js"
   },
   "keywords": [
     "bilibili",
-    "automation",
+    "pet",
+    "hangup",
     "github-actions",
-    "signin",
-    "hangup"
+    "yyai"
   ],
   "author": "hugh194600-cpu",
   "license": "MIT",
@@ -29,6 +28,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/hugh194600-cpu/bilibili-automation.git"
+    "url": "https://github.com/hugh194600-cpu/my-scripts.git"
   }
 }

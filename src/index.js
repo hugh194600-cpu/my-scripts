@@ -1,6 +1,6 @@
 /**
  * B站自动化工具 - 主入口
- * 支持：签到、挂机修炼、宠物成长
+ * 当前主用途：弹幕宠物挂机修炼；兼容本地辅助宠物签到
  */
 
 const https = require('https');
@@ -16,7 +16,7 @@ const UID = process.env.BILIBILI_UID || '';
 const HANGUP_ROOM_ID = process.env.HANGUP_ROOM_ID || '5456135';  // 弹幕宠物所在直播间
 const HANGUP_DURATION = parseInt(process.env.HANGUP_DURATION || '3600', 10);
 const PET_NAME = process.env.PET_NAME || '我的弹幕宠物';
-const TASK = process.env.TASK || 'all'; // all | signin | hangup | pet
+const TASK = process.env.TASK || 'hangup'; // hangup | pet | all
 
 // 随机挂机直播间列表（用于B站经验心跳，与弹幕宠物直播间不同）
 // 可通过环境变量 RANDOM_ROOMS 覆盖，格式：逗号分隔的房间号，如 "732,6,1,76"
@@ -1299,82 +1299,6 @@ async function checkLogin() {
 }
 
 // ==============================
-// 任务1：每日签到
-// ==============================
-async function doSignin() {
-  console.log('\n🎯 ======== 每日签到 ========');
-  
-  // 查询今日任务状态
-  try {
-    const status = await apiGet('/x/member/web/exp/reward');
-    console.log(`   今日任务查询: code=${status.code}`);
-    if (status.code === 0 && status.data) {
-      const d = status.data;
-      console.log(`   今日登录: ${d.login ? '✅ 已完成' : '❌ 未完成'}`);
-      console.log(`   今日观看: ${d.watch ? '✅ 已完成' : '❌ 未完成'}`);
-      console.log(`   今日投币: ${d.coins ? `✅ 已完成(${d.coins}枚)` : '❌ 未完成'}`);
-      
-      if (d.login === true) {
-        console.log('ℹ️  今日已登录签到，经验已获取');
-        return true;
-      }
-    }
-  } catch (e) {
-    console.log('   无法查询签到状态，继续...');
-  }
-
-  // 执行每日签到
-  // 当前以 GET /x/member/web/exp/reward 作为“是否拿到登录经验”的确认接口。
-  // 如果连续复查后 login 仍为 false，就不能把这次执行算作真实成功。
-  try {
-    console.log('\n   执行签到确认（GET /x/member/web/exp/reward）');
-    const res = await apiGet('/x/member/web/exp/reward');
-    const code = res.code;
-    const msg = res.message || res.msg || '';
-    console.log(`   签到接口返回: code=${code}, msg=${msg}`);
-    
-    if (code === 0) {
-      const d = res.data || {};
-      console.log(`   登录状态: ${d.login ? '✅ 已签到' : '❌ 未签到'}`);
-      
-      if (d.login === true) {
-        console.log('✅ 已确认今日登录经验到账');
-        return true;
-      }
-
-      console.log('   首次查询未确认到账，尝试访问主页后再次复查...');
-      await apiGet('/x/web-interface/nav');
-
-      const res2 = await apiGet('/x/member/web/exp/reward');
-      const d2 = res2.data || {};
-      console.log(`   二次复查: code=${res2.code}, login=${d2.login === true ? 'true' : 'false'}`);
-
-      if (res2.code === 0 && d2.login === true) {
-        console.log('✅ 复查确认今日登录经验到账');
-        return true;
-      }
-
-      const failMsg = `未能确认今日登录经验到账：首次 login=${d.login}, 二次 login=${d2.login}`;
-      console.warn(`⚠️  ${failMsg}`);
-      await sendMail(
-        '【B站自动化】⚠️ 未确认到今日登录经验到账',
-        `B站每日签到任务已执行，但连续两次检查都未确认到今日登录经验到账。\n\n排查信息：\n- 首次检查 login=${d.login}\n- 二次检查 login=${d2.login}\n- 接口返回 code=${res2.code}\n\n建议操作：\n1. 手动打开 bilibili.com 并确认账号处于登录状态\n2. 检查当天经验是否实际增长\n3. 如 Cookie 已变更，前往 GitHub 仓库 → Settings → Secrets and variables → Actions → 更新 BILIBILI_COOKIE\n\n时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`
-      );
-      return false;
-    } else if (code === -101) {
-      console.error('❌ 账号未登录，Cookie 已过期');
-      return false;
-    } else {
-      console.warn(`⚠️  签到返回: ${code} - ${msg}`);
-      return false;
-    }
-  } catch (e) {
-    console.error('❌ 签到异常：', e.message);
-    return false;
-  }
-}
-
-// ==============================
 // 检测直播间是否开播
 // ==============================
 async function getRoomLiveStatus(roomId) {
@@ -1607,7 +1531,7 @@ async function sendActiveRoomHeartbeat(roomInfoOrRoomId) {
 
 
 // ==============================
-// 任务2：直播挂机修炼（发弹幕）
+// 任务1：直播挂机修炼（发弹幕）
 // 流程：检测直播间开播 → 关播自动换 → 进场 → 心跳 → 发修仙弹幕 → 再次心跳 → 查询经验
 // ==============================
 
@@ -2064,10 +1988,6 @@ async function main() {
 
   const results = {};
 
-  if (TASK === 'all' || TASK === 'signin') {
-    results.signin = await doSignin();
-  }
-
   if (TASK === 'all' || TASK === 'hangup') {
     results.hangup = await doHangup();
   }
@@ -2078,7 +1998,6 @@ async function main() {
 
   console.log('\n' + '='.repeat(50));
   console.log('📊 执行结果汇总:');
-  if ('signin' in results) console.log(`   签到: ${results.signin ? '✅ 成功' : '❌ 失败'}`);
   if ('hangup' in results) console.log(`   挂机: ${results.hangup ? '✅ 成功' : '❌ 失败'}`);
   if ('pet' in results) console.log(`   宠物: ${results.pet ? '✅ 成功' : '❌ 失败'}`);
 
@@ -2095,32 +2014,7 @@ async function main() {
 }
 
 
-// ==============================
-// 兼容旧版云函数入口
-// ==============================
-// 仅为兼容历史调用保留 main_handler；当前主运行方式是 GitHub Actions
-async function main_handler(event, context) {
-  try {
-    const summary = await main();
-    return {
-      ok: true,
-      ...summary,
-      event: event || null
-    };
-  } catch (err) {
-    console.error('❌ 未处理的错误:', err);
-    return {
-      ok: false,
-      error: err.message,
-      details: RUN_DETAILS,
-      event: event || null
-    };
-  }
-}
 
-
-// 导出给腾讯云
-exports.main_handler = main_handler;
 
 // 本地运行支持
 if (require.main === module) {

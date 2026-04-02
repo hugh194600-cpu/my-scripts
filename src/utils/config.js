@@ -7,11 +7,6 @@ class Config {
       uid: process.env.BILIBILI_UID || ''
     };
 
-    this.signin = {
-      enabled: process.env.AUTO_SIGNIN === 'true',
-      time: process.env.SIGNIN_TIME || '08:00'
-    };
-
     this.hangup = {
       enabled: process.env.AUTO_HANGUP === 'true',
       roomId: process.env.HANGUP_ROOM_ID || '732',

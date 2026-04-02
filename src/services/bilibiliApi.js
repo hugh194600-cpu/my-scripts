@@ -97,57 +97,7 @@ class BilibiliApi {
     }
   }
 
-  // =====================================================
-  // 每日签到
-  // =====================================================
 
-  async getSignStatus() {
-    try {
-      this.logger.task('获取签到状态');
-      const response = await this.client.get('/x/member/web/exp/reward');
-      if (response.data.code === 0) {
-        const signed = response.data.data.login === true;
-        this.logger.info(`今日已签到: ${signed ? '是' : '否'}`);
-        return { signed, reward: response.data.data };
-      }
-      return { signed: false };
-    } catch (error) {
-      this.logger.error('获取签到状态失败', error.message);
-      return { signed: false, error: error.message };
-    }
-  }
-
-  async doSignin() {
-    try {
-      this.logger.task('执行每日签到');
-      if (!this.csrf) {
-        return { success: false, message: 'csrf token缺失，Cookie格式不完整' };
-      }
-
-      const response = await this.client.post(
-        '/x/member/web/exp/reward',
-        `csrf=${this.csrf}`,
-        { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
-      );
-
-      if (response.data.code === 0) {
-        this.logger.success('签到成功！');
-        return { success: true, exp: 5, message: '签到成功' };
-      } else if (response.data.code === -111) {
-        return { success: false, message: 'csrf验证失败' };
-      } else if (response.data.code === -101) {
-        return { success: false, message: '账号未登录或Cookie过期' };
-      } else {
-        // 再查一次状态
-        const check = await this.getSignStatus();
-        if (check.signed) return { success: true, message: '今日已签到', alreadySigned: true };
-        return { success: false, message: response.data.message || `code: ${response.data.code}` };
-      }
-    } catch (error) {
-      this.logger.error('签到出错', error.message);
-      return { success: false, message: error.message };
-    }
-  }
 
   // =====================================================
   // 直播间相关
