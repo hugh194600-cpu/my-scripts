@@ -2,8 +2,10 @@ name: B站每日签到
 
 on:
   schedule:
-    # 每15分钟执行一次
-    - cron: '*/15 * * * *'
+    # 每天北京时间 08:00 执行（UTC 00:00）
+    - cron: '0 0 * * *'
+    # 备用：北京时间 10:00（UTC 02:00），防止首次被跳过
+    - cron: '0 2 * * *'
   workflow_dispatch:
     inputs:
       debug:
@@ -25,6 +27,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - name: 安装依赖
+        run: npm install
 
       - name: 执行签到
         env:

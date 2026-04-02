@@ -2,24 +2,29 @@ name: 边界AI每日签到
 
 on:
   schedule:
-    # 每天北京时间 08:00 执行（UTC 00:00）
-    - cron: '0 0 * * *'
-    # 备用触发：北京时间 10:00（UTC 02:00），防止首次被跳过
-    - cron: '0 2 * * *'
+    # 每天北京时间 08:05 执行（UTC 00:05）
+    - cron: '5 0 * * *'
+    # 备用：北京时间 10:05（UTC 02:05）
+    - cron: '5 2 * * *'
   workflow_dispatch:
-    # 支持手动触发
 
 jobs:
   signin:
+    name: 边界AI签到
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
     steps:
-      - name: Checkout
+      - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: 配置 Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
+
+      - name: 安装依赖
+        run: npm install
 
       - name: 执行边界AI签到
         env:

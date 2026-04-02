@@ -1,4 +1,99 @@
-# 本地测试用，不提交
-.env
+# ========== 依赖 ==========
 node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ========== 环境变量（包含敏感信息，严禁提交） ==========
+.env
+.env.local
+.env.*.local
+
+# ========== 腾讯云 SCF 相关（迁移到 GitHub Actions 后不再需要） ==========
+cloudfunctions/
+bilibili_hangup_*.zip
+bilibili_hangup_b64.txt
+generate_scf_zip.py
+deploy_scf_code.py
+setup_scf_env.py
+update_scf_env.py
+update_scf_timeout.py
+list_scf.py
+verify_upload.py
+
+# ========== 本地测试与工具脚本 ==========
+test_local.js
+*.bat
+*.ps1
+$null
+
+# ========== WorkBuddy/IDE 内部文件 ==========
+.workbuddy/
+.learnings/
+
+# ========== 构建与临时文件 ==========
+dist/
+build/
 *.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+*.bak
+*.backup
+
+# ========== 操作系统文件 ==========
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+.AppleDouble
+._*
+
+# ========== IDE ==========
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.iml
+*.iws
+
+# ========== 历史文档（不需要上仓库） ==========
+"*.md" linguist-documentation
+check_github_errors.md
+delete-old-branch.md
+delete_old_workflow.bat
+fix-branch-error.md
+fix-workflow-error.md
+fix-yaml-error.md
+workflow-trigger-fix.md
+GITHUB_SECRETS_SETUP.md
+
+# ========== 安全相关 ==========
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+
+# ========== 其他 ==========
+coverage/
+.nyc_output/
+.cache/
+.parcel-cache/
+git-commands.txt
+commit.js
+utils/cloud-config.js
+server/
+assets/
+backup/
+temp_remote_index.js
+sitemap.json
+overview.md
+PROJECT_SUMMARY.md
+README_DEPLOY.md
+SPEC.md

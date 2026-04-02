@@ -1,14 +1,19 @@
-name: B站直播挂机
+name: B站弹幕宠物挂机修炼
 
 on:
   schedule:
-    # 每10分钟执行一次（修仙状态默认600秒=10分钟，刚好续上不断档）
+    # 每10分钟触发一次（北京时间，UTC+8）
     - cron: '*/10 * * * *'
   workflow_dispatch:
+    inputs:
+      task:
+        description: '执行任务 (hangup)'
+        required: false
+        default: 'hangup'
 
 jobs:
   hangup:
-    name: 直播挂机
+    name: 弹幕宠物挂机修炼
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -21,12 +26,16 @@ jobs:
         with:
           node-version: '20'
 
+      - name: 安装依赖
+        run: npm install
+
       - name: 执行挂机
         env:
           BILIBILI_COOKIE: ${{ secrets.BILIBILI_COOKIE }}
           BILIBILI_UID: ${{ secrets.BILIBILI_UID }}
           HANGUP_ROOM_ID: ${{ secrets.HANGUP_ROOM_ID }}
-          HANGUP_DURATION: ${{ secrets.HANGUP_DURATION }}
+          PET_PRIORITY_ROOMS: ${{ secrets.PET_PRIORITY_ROOMS }}
+          RANDOM_ROOMS: ${{ secrets.RANDOM_ROOMS }}
           QQ_MAIL_USER: ${{ secrets.QQ_MAIL_USER }}
           QQ_MAIL_PASS: ${{ secrets.QQ_MAIL_PASS }}
           TASK: hangup

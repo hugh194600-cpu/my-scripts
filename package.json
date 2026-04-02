@@ -1,17 +1,34 @@
 {
   "name": "bilibili-automation",
-  "version": "2.0.0",
-  "description": "B站自动化工具 - 签到/挂机/宠物成长",
+  "version": "1.0.0",
+  "description": "B站自动化工具 - 自动签到、升级、修炼",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "signin": "TASK=signin node src/index.js",
-    "hangup": "TASK=hangup node src/index.js",
-    "pet": "TASK=pet node src/index.js"
+    "dev": "node src/index.js",
+    "signin": "node src/tasks/signin.js",
+    "hangup": "node src/tasks/hangup.js",
+    "pet": "node src/tasks/pet.js",
+    "test": "node src/test.js"
+  },
+  "keywords": [
+    "bilibili",
+    "automation",
+    "github-actions",
+    "signin",
+    "hangup"
+  ],
+  "author": "hugh194600-cpu",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=16.0.0"
   },
-  "keywords": ["bilibili", "automation", "github-actions"],
-  "license": "MIT"
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hugh194600-cpu/bilibili-automation.git"
+  }
 }

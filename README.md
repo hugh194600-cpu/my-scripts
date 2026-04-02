@@ -1,50 +1,101 @@
-# B站自动化工具 v2.0
+# B站自动化工具 🚀
 
-自动完成B站每日任务，获取经验值。
+[![B站每日签到](https://github.com/hugh194600-cpu/bilibili-automation/actions/workflows/signin.yml/badge.svg)](https://github.com/hugh194600-cpu/bilibili-automation/actions/workflows/signin.yml)
+[![B站弹幕宠物挂机](https://github.com/hugh194600-cpu/bilibili-automation/actions/workflows/hangup.yml/badge.svg)](https://github.com/hugh194600-cpu/bilibili-automation/actions/workflows/hangup.yml)
+[![边界AI签到](https://github.com/hugh194600-cpu/bilibili-automation/actions/workflows/yyai_signin.yml/badge.svg)](https://github.com/hugh194600-cpu/bilibili-automation/actions/workflows/yyai_signin.yml)
 
-## 功能
+基于 **GitHub Actions** 的自动化工具，完全免费，无需云函数。
 
-- ✅ **每日签到** - 每天自动签到 +5经验
-- ✅ **直播挂机** - 在直播间挂机修炼
-- ✅ **宠物成长** - 记录每日宠物成长
+## ✨ 功能
 
-## 配置 GitHub Secrets
+| 工作流 | 触发时间 | 功能 |
+|--------|---------|------|
+| B站每日签到 | 每天 08:00 / 10:00（北京时间） | 自动签到，Cookie 失效时发邮件通知 |
+| 弹幕宠物挂机修炼 | 每 10 分钟 | 扫描开播的弹幕宠物直播间，发修炼指令，校验 +19 经验，满经验自动突破 |
+| 边界AI签到 | 每天 08:05 / 10:05（北京时间） | yyai8.com 每日签到，token 失效时发邮件通知 |
 
-进入仓库 → Settings → Secrets and variables → Actions → New repository secret
+## 🚀 快速部署
 
-| Secret名称 | 说明 | 必填 |
-|-----------|------|------|
-| `BILIBILI_COOKIE` | B站登录Cookie（必须包含SESSDATA和bili_jct） | ✅ |
-| `BILIBILI_UID` | 你的B站UID（数字） | 可选 |
-| `HANGUP_ROOM_ID` | 挂机直播间ID（默认732） | 可选 |
-| `HANGUP_DURATION` | 挂机时长秒数（默认3600） | 可选 |
-| `PET_NAME` | 宠物名称（默认：我的弹幕宠物） | 可选 |
+### 第一步：Fork 本仓库
 
-## 获取 Cookie
+点击右上角 **Fork**，复制到你自己的 GitHub 账号。
 
-1. 打开浏览器，登录 [bilibili.com](https://www.bilibili.com)
-2. 按 F12 打开开发者工具
-3. 点击 Application → Cookies → https://www.bilibili.com
-4. 复制以下字段，格式：`SESSDATA=xxx; bili_jct=xxx; DedeUserID=xxx`
+### 第二步：配置 GitHub Secrets
 
-**必须包含的字段：**
-- `SESSDATA` - 登录凭证
-- `bili_jct` - CSRF Token（签到必须）
-- `DedeUserID` - 你的UID
+进入你 Fork 的仓库 → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**
 
-## 执行时间（北京时间）
+**B站相关（必填）：**
 
-| 任务 | 时间 |
-|------|------|
-| 签到 | 每天 16:00 |
-| 挂机 | 每天 08:00, 14:00, 20:00, 02:00 |
-| 宠物 | 每天 08:00, 20:00 |
+| Secret 名称 | 说明 |
+|------------|------|
+| `BILIBILI_COOKIE` | B站登录 Cookie（从浏览器 F12 → Network → 任意 B 站请求的 Cookie 头复制） |
+| `BILIBILI_UID` | B站用户 UID（个人主页 URL 里的数字） |
 
-## 手动触发
+**挂机相关（可选但推荐）：**
 
-进入 Actions → 选择工作流 → Run workflow
+| Secret 名称 | 说明 | 默认值 |
+|------------|------|-------|
+| `PET_PRIORITY_ROOMS` | 历史确认打出过 +19 的优先房间号，逗号分隔 | `1788399444` |
+| `HANGUP_ROOM_ID` | 备选挂机房间 | `5456135` |
+| `RANDOM_ROOMS` | 随机心跳直播间列表，逗号分隔 | `732,6,1,76,488,21452505` |
 
-## 注意事项
+**邮件通知（可选但推荐）：**
 
-- Cookie 有效期约1-3个月，过期需重新获取
-- 每月2000分钟免费额度（本项目完全够用）
+| Secret 名称 | 说明 |
+|------------|------|
+| `QQ_MAIL_USER` | QQ 邮箱地址 |
+| `QQ_MAIL_PASS` | QQ 邮箱授权码（不是登录密码，在 QQ 邮箱设置 → SMTP 里生成） |
+
+**边界AI相关（仅使用边界AI签到时需要）：**
+
+| Secret 名称 | 说明 |
+|------------|------|
+| `YYAI_TOKEN` | 边界AI短 token（yyai8.com F12 → Network → 签到请求 Headers 里） |
+| `YYAI_ACCESS_TOKEN` | 边界AI access-token（同上） |
+| `YYAI_UID` | 边界AI uid（同上） |
+
+### 第三步：手动触发测试
+
+1. 进入 **Actions** 标签页
+2. 左侧选择 **B站每日签到**
+3. 点击 **Run workflow** → **Run workflow**
+4. 等待完成后查看日志确认
+
+## 🔧 挂机修炼说明
+
+- 每 10 分钟执行一次，自动扫描已开播且开启弹幕宠物的直播间
+- 优先检查 `PET_PRIORITY_ROOMS` 配置的房间，再自动扫描
+- 触发修炼顺序：**宠物面板「修仙」 → 直播弹幕「修炼」 → 直播弹幕「修仙」**
+- 触发后等待 12 秒，校验经验增量 ≥ +19 才算修炼成功
+- 若经验已满，优先通过宠物面板发送「突破」，失败时回退到直播弹幕「突破」
+- 单次最多尝试 3 个候选直播间
+
+## ⚙️ 本地运行
+
+```bash
+git clone https://github.com/hugh194600-cpu/bilibili-automation.git
+cd bilibili-automation
+npm install
+cp .env.example .env
+# 编辑 .env 填入 BILIBILI_COOKIE 等配置
+node src/index.js
+```
+
+## ⚠️ 注意事项
+
+- **Cookie 有效期**：B站 Cookie 通常数月有效，但登出或修改密码后会立即失效；失效后程序会发邮件通知
+- **GitHub Actions 免费额度**：公开仓库完全免费，无分钟限制；私有仓库每月有 2000 分钟免费额度
+- **挂机频率**：每 10 分钟一次，每次运行约 1-2 分钟，私有仓库用量极低
+- 本项目仅供学习研究，请遵守 B 站用户协议，风险自负
+
+## 📝 更新日志
+
+### v2.0.0 (2026-04-02)
+- ✅ 从腾讯云 SCF 全面迁移到 GitHub Actions（完全免费）
+- ✅ 修炼触发链路：宠物面板 + 直播弹幕双重保障
+- ✅ 12 秒增量校验确认修炼真实有效（+19 才算成功）
+- ✅ 满经验自动突破（面板优先，弹幕兜底）
+- ✅ 返回值内置触发顺序 / 实际执行路径 / 突破链路可见
+
+### v1.0.0 (2026-03-24)
+- ✅ 初始版本：自动签到 + 挂机修炼 + GitHub Actions 集成
