@@ -28,7 +28,8 @@ const PET_ROOM_KEYWORDS_RAW = process.env.PET_ROOM_KEYWORDS || '弹幕宠物,修
 const PET_ROOM_KEYWORDS = PET_ROOM_KEYWORDS_RAW.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 const PET_DISCOVERY_PAGES = Math.max(1, parseInt(process.env.PET_DISCOVERY_PAGES || '2', 10));
 const PET_DISCOVERY_LIMIT = Math.max(5, parseInt(process.env.PET_DISCOVERY_LIMIT || '12', 10));
-const PET_PRIORITY_ROOMS_RAW = process.env.PET_PRIORITY_ROOMS || '1788399444';
+// 默认不再内置固定优先房，避免单个已退化房间长期被优先尝试
+const PET_PRIORITY_ROOMS_RAW = process.env.PET_PRIORITY_ROOMS || '';
 const PET_PRIORITY_ROOMS = PET_PRIORITY_ROOMS_RAW.split(',').map(s => s.trim()).filter(Boolean);
 const PET_PRIORITY_ROOM_SET = new Set(PET_PRIORITY_ROOMS);
 
