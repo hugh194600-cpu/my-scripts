@@ -1276,7 +1276,7 @@ async function checkLogin() {
       // 发送邮件通知
       await sendMail(
         '【B站自动化】⚠️ Cookie 已失效，请及时更新',
-        `您的 B站 Cookie 已过期，自动化任务已停止运行。\n\n请按以下步骤更新：\n1. 打开浏览器，登录 bilibili.com\n2. F12 → Application → Cookies → bilibili.com\n3. 复制完整 Cookie 字符串\n4. 前往腾讯云 SCF → bilibili-hangup → 函数配置 → 环境变量 → 更新 BILIBILI_COOKIE\n\n时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`
+        `您的 B站 Cookie 已过期，自动化任务已停止运行。\n\n请按以下步骤更新：\n1. 打开浏览器，登录 bilibili.com\n2. F12 → Application → Cookies → bilibili.com\n3. 复制完整 Cookie 字符串\n4. 前往 GitHub 仓库 → Settings → Secrets and variables → Actions → 更新 BILIBILI_COOKIE\n\n时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`
       );
 
       return false;
@@ -1323,16 +1323,11 @@ async function doSignin() {
     console.log('   无法查询签到状态，继续...');
   }
 
-  // 执行每日签到（正确接口：x/web-interface/index/top/rcmd 的签到是通过访问触发的）
-  // B站每日签到实际上通过 POST /x/member/web/exp/reward 的 GET 请求自动记录
-  // 真正的签到接口：https://api.bilibili.com/x/member/web/sign (旧)
-  // 或通过访问 https://www.bilibili.com 触发自动登录奖励
-  // 
-  // 实际上 /x/member/web/exp/reward 是GET查询接口，每次查询会自动记录登录
-  // 只需要 GET 这个接口，登录任务就会被标记为完成
-  
+  // 执行每日签到
+  // 当前以 GET /x/member/web/exp/reward 作为“是否拿到登录经验”的确认接口。
+  // 如果连续复查后 login 仍为 false，就不能把这次执行算作真实成功。
   try {
-    console.log('\n   执行签到（GET /x/member/web/exp/reward）');
+    console.log('\n   执行签到确认（GET /x/member/web/exp/reward）');
     const res = await apiGet('/x/member/web/exp/reward');
     const code = res.code;
     const msg = res.message || res.msg || '';
@@ -1343,22 +1338,29 @@ async function doSignin() {
       console.log(`   登录状态: ${d.login ? '✅ 已签到' : '❌ 未签到'}`);
       
       if (d.login === true) {
-        console.log('✅ 签到成功！今日登录 +5 经验');
+        console.log('✅ 已确认今日登录经验到账');
         return true;
-      } else {
-        // 尝试访问主页触发签到
-        console.log('   尝试访问主页触发签到...');
-        await apiGet('/x/web-interface/nav');
-        // 再次查询
-        const res2 = await apiGet('/x/member/web/exp/reward');
-        if (res2.code === 0 && res2.data && res2.data.login) {
-          console.log('✅ 签到成功！今日登录 +5 经验');
-          return true;
-        } else {
-          console.warn('⚠️  登录状态未更新，可能今日已签到或需要手动操作');
-          return true; // 已登录即视为成功
-        }
       }
+
+      console.log('   首次查询未确认到账，尝试访问主页后再次复查...');
+      await apiGet('/x/web-interface/nav');
+
+      const res2 = await apiGet('/x/member/web/exp/reward');
+      const d2 = res2.data || {};
+      console.log(`   二次复查: code=${res2.code}, login=${d2.login === true ? 'true' : 'false'}`);
+
+      if (res2.code === 0 && d2.login === true) {
+        console.log('✅ 复查确认今日登录经验到账');
+        return true;
+      }
+
+      const failMsg = `未能确认今日登录经验到账：首次 login=${d.login}, 二次 login=${d2.login}`;
+      console.warn(`⚠️  ${failMsg}`);
+      await sendMail(
+        '【B站自动化】⚠️ 未确认到今日登录经验到账',
+        `B站每日签到任务已执行，但连续两次检查都未确认到今日登录经验到账。\n\n排查信息：\n- 首次检查 login=${d.login}\n- 二次检查 login=${d2.login}\n- 接口返回 code=${res2.code}\n\n建议操作：\n1. 手动打开 bilibili.com 并确认账号处于登录状态\n2. 检查当天经验是否实际增长\n3. 如 Cookie 已变更，前往 GitHub 仓库 → Settings → Secrets and variables → Actions → 更新 BILIBILI_COOKIE\n\n时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`
+      );
+      return false;
     } else if (code === -101) {
       console.error('❌ 账号未登录，Cookie 已过期');
       return false;
