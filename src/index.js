@@ -611,8 +611,9 @@ async function runOneCycle(roomId, roomInfo, cycleIndex) {
     warn('读取宠物经验失败（直播间可能无弹幕宠物或面板暂不可用）');
   }
 
-  log(`本轮完成，等待 ${CYCLE_MINUTES} 分钟后进行下一轮...`);
+  log('本轮完成');
 }
+
 
 // ==============================
 // 主循环
@@ -696,14 +697,19 @@ async function main() {
 
     // 等到下一轮（精确到原定间隔）
     const elapsed = Date.now() - cycleStart;
-    const wait    = Math.max(0, cycleMs - elapsed);
+    const wait = Math.max(0, cycleMs - elapsed);
     const remaining = maxRunMs - (Date.now() - startTime);
 
     if (remaining <= 0) break;
-    if (wait > 0 && wait < remaining) {
-      log(`等待 ${Math.round(wait / 1000)} 秒...`);
-      await sleep(wait);
+    if (wait <= 0) continue;
+    if (wait > remaining) {
+      log(`剩余 ${Math.round(remaining / 1000)} 秒，不足以下一轮间隔，结束本次挂机`);
+      break;
     }
+
+    log(`等待 ${Math.round(wait / 1000)} 秒...`);
+    await sleep(wait);
+
   }
 
   log(`=== 挂机结束，共执行 ${cycleIndex - 1} 轮，总耗时 ${Math.round((Date.now() - startTime) / 60000)} 分钟 ===`);
