@@ -1,8 +1,9 @@
 /**
  * B站弹幕宠物挂机 - 精简版
- * 逻辑：进入直播间 → 每10分钟循环（签到 → 修炼 → 突破检测）
+ * 逻辑：进入直播间 → 每10分钟循环（面板签到 → 面板修仙 → 突破检测）
  *       直播间关播后自动换房继续
  */
+
 
 const net = require('net');
 const tls = require('tls');
@@ -17,8 +18,9 @@ const HANGUP_ROOM_ID = process.env.HANGUP_ROOM_ID || '';
 const CYCLE_MINUTES = Math.max(1, parseInt(process.env.CYCLE_MINUTES || '10', 10));
 // 总运行时长（分钟），GitHub Actions 默认 350 分钟留 10 分钟余量
 const MAX_RUNTIME_MINUTES = Math.max(5, parseInt(process.env.MAX_RUNTIME_MINUTES || '350', 10));
-// 弹幕间隔（毫秒），避免发送太快被忽略
+// 操作间隔（毫秒），沿用旧变量名兼容现有 workflow / secrets
 const DANMU_GAP_MS  = Math.max(2000, parseInt(process.env.DANMU_GAP_MS || '3000', 10));
+
 const MAIL_USER     = process.env.QQ_MAIL_USER || '';
 const MAIL_PASS     = process.env.QQ_MAIL_PASS || '';
 
@@ -389,8 +391,165 @@ function extractInput(html, id) {
   return m ? m[1] : '';
 }
 
+const PANEL_ACTION_LABELS = {
+  signin: '签到',
+  cultivate: '修仙',
+  breakthrough: '突破'
+};
+
+function extractPanelCommandIds(html) {
+  const ids = [];
+  const seen = new Set();
+  const regex = /id="([^"]+Msg)"[^>]*value="([^"]*)"/ig;
+
+  for (const match of String(html || '').matchAll(regex)) {
+    const inputId = match[1];
+    const value = match[2] || '';
+    if (!inputId || !value || seen.has(inputId)) continue;
+    seen.add(inputId);
+    ids.push(inputId);
+  }
+
+  return ids;
+}
+
+function formatPanelCommandIds(ids) {
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return '面板未解析到任何 *Msg 指令字段';
+  }
+  return `面板可见指令字段: ${ids.join(', ')}`;
+}
+
+function calculateEnergyDelta(fromEnergy, toEnergy) {
+  if (!fromEnergy || !toEnergy) return null;
+  const fromCurrent = Number(fromEnergy.current);
+  const toCurrent = Number(toEnergy.current);
+  if (!Number.isFinite(fromCurrent) || !Number.isFinite(toCurrent)) return null;
+  return toCurrent - fromCurrent;
+}
+
+function isIdleLikeGain(delta) {
+  return Number.isFinite(delta) && delta >= 14 && delta % 14 === 0;
+}
+
+function evaluateCultivationGain(beforeEnergy, afterEnergy, options = {}) {
+  const round = Math.max(1, Number(options.round || 1));
+  const maxRounds = Math.max(round, Number(options.maxRounds || 1));
+  const waitSeconds = Math.max(1, Math.round(Number(options.waitMs || 12000) / 1000));
+  const totalWaitSeconds = waitSeconds * round;
+  const previousEnergy = options.previousEnergy || beforeEnergy;
+  const windowDelta = calculateEnergyDelta(previousEnergy, afterEnergy);
+  const base = {
+    verified: false,
+    delta: null,
+    windowDelta,
+    round,
+    maxRounds,
+    waitSeconds,
+    totalWaitSeconds,
+    expectedActiveGain: 19,
+    expectedIdleGain: 14,
+    idleLike: false,
+    delayedLike: false,
+    needsAnotherCheck: round < maxRounds,
+    reason: ''
+  };
+
+  if (!beforeEnergy || !afterEnergy) {
+    return {
+      ...base,
+      reason: round < maxRounds
+        ? `第 ${round} 次 ${waitSeconds} 秒复查未拿到完整经验，继续再查一次，排除面板显示滞后`
+        : `连续 ${maxRounds} 次、累计 ${totalWaitSeconds} 秒复查后仍未拿到完整经验，无法确认修炼是否真实生效`
+    };
+  }
+
+  const delta = calculateEnergyDelta(beforeEnergy, afterEnergy);
+  if (!Number.isFinite(delta)) {
+    return {
+      ...base,
+      reason: round < maxRounds
+        ? `第 ${round} 次 ${waitSeconds} 秒复查读到的经验格式异常，继续再查一次`
+        : `连续 ${maxRounds} 次、累计 ${totalWaitSeconds} 秒复查后经验格式仍异常，无法确认修炼是否真实生效`
+    };
+  }
+
+  if (delta >= 19 && !isIdleLikeGain(delta)) {
+    return {
+      ...base,
+      verified: true,
+      delta,
+      needsAnotherCheck: false,
+      reason: `第 ${round} 次 ${waitSeconds} 秒复查后累计经验 +${delta}，且不是 +14 的倍数，可确认修炼加成已生效`
+    };
+  }
+
+  if (delta >= 19 && isIdleLikeGain(delta)) {
+    return {
+      ...base,
+      delta,
+      idleLike: true,
+      delayedLike: true,
+      reason: round < maxRounds
+        ? `第 ${round} 次 ${waitSeconds} 秒复查后累计经验 +${delta}，但仍是 +14 的倍数，更像基础收益显示滞后，继续再查一次`
+        : `连续 ${maxRounds} 次、累计 ${totalWaitSeconds} 秒复查后经验 +${delta} 仍是 +14 的倍数，更像基础收益或显示滞后，未确认修炼真正生效`
+    };
+  }
+
+  if (delta >= 14) {
+    return {
+      ...base,
+      delta,
+      idleLike: true,
+      reason: round < maxRounds
+        ? `第 ${round} 次 ${waitSeconds} 秒复查后累计经验 +${delta}，更像基础在线收益，继续再查一次`
+        : `连续 ${maxRounds} 次、累计 ${totalWaitSeconds} 秒复查后经验 +${delta}，仍未达到修炼成功应有的有效增量`
+    };
+  }
+
+  return {
+    ...base,
+    delta,
+    reason: round < maxRounds
+      ? `第 ${round} 次 ${waitSeconds} 秒复查后累计经验 +${delta}，继续再查一次确认是否存在显示滞后`
+      : `连续 ${maxRounds} 次、累计 ${totalWaitSeconds} 秒复查后经验 +${delta}，未达到修炼成功应有的有效增量`
+  };
+}
+
+function resolvePanelCommandInputId(panelHtml, action) {
+  const commandIds = extractPanelCommandIds(panelHtml);
+  const exactCandidates = {
+    signin: ['lblQdMsg', 'lblSignMsg', 'lblQiandaoMsg', 'lblCheckinMsg'],
+    cultivate: ['lblXxMsg', 'lblXiuxianMsg', 'lblCultivateMsg'],
+    breakthrough: ['lblTpMsg', 'lblTupoMsg', 'lblBreakthroughMsg']
+  };
+  const keywordCandidates = {
+    signin: ['qd', 'sign', 'qiandao', 'checkin'],
+    cultivate: ['xx', 'xiuxian', 'cultivate', 'xiulian'],
+    breakthrough: ['tp', 'tupo', 'breakthrough', 'upgrade']
+  };
+  const lowerIds = commandIds.map((id) => ({ original: id, lower: id.toLowerCase() }));
+
+  for (const candidate of exactCandidates[action] || []) {
+    const matched = lowerIds.find((item) => item.lower === candidate.toLowerCase());
+    if (matched) {
+      return { inputId: matched.original, commandIds, strategy: 'exact' };
+    }
+  }
+
+  for (const keyword of keywordCandidates[action] || []) {
+    const matched = lowerIds.find((item) => item.lower.includes(keyword));
+    if (matched) {
+      return { inputId: matched.original, commandIds, strategy: 'heuristic' };
+    }
+  }
+
+  return { inputId: '', commandIds, strategy: 'missing' };
+}
+
 // 获取 panel_url
 async function getPanelUrl(roomId) {
+
   // 从直播间页面提取 game_id
   const html = await fetchHtml(`https://live.bilibili.com/${roomId}`, `https://live.bilibili.com/${roomId}`);
   const tagMatch = html.match(/"interactive_game_tag":\{"action":\d+,"game_id":"([^"]+)","game_name":"([^"]+)"/);
@@ -449,15 +608,27 @@ async function getPetEnergy(roomId) {
 
 // 通过宠物面板发送指令
 async function sendPanelCommand(roomId, inputId, energy) {
-  // 复用 energy 里已拿到的面板 HTML，避免重复请求
   const panelHtml = energy?.panelHtml || '';
-  const serverUrl     = extractInput(panelHtml, 'serverurl');
-  const isPetMsg      = extractInput(panelHtml, 'lblIsPetMsg');
-  const commandMode   = extractInput(panelHtml, 'PetCmdMt') || '2';
+  const serverUrl = extractInput(panelHtml, 'serverurl');
+  const isPetMsg = extractInput(panelHtml, 'lblIsPetMsg');
+  const commandMode = extractInput(panelHtml, 'PetCmdMt') || '2';
   const commandPayload = extractInput(panelHtml, inputId);
+  const commandIds = extractPanelCommandIds(panelHtml);
 
-  if (!serverUrl || isPetMsg !== 'True' || !commandPayload) {
-    return false;
+  if (!serverUrl || isPetMsg !== 'True' || !commandPayload || !energy?.panelMeta?.panelUrl) {
+    return {
+      available: false,
+      success: false,
+      response: { code: -1, message: '当前直播间宠物面板未提供可用指令通道' },
+      reason: `当前直播间宠物面板未提供可用指令通道；${formatPanelCommandIds(commandIds)}`,
+      panelCommandMeta: {
+        inputId,
+        commandIds,
+        serverUrl,
+        isPetMsg,
+        commandMode
+      }
+    };
   }
 
   const body = `j=${encodeURIComponent(commandPayload)}`;
@@ -473,10 +644,166 @@ async function sendPanelCommand(roomId, inputId, energy) {
       'Referer': energy.panelMeta.panelUrl,
       'Origin': `${panelUrlObj.protocol}//${panelUrlObj.host}`
     }
-  }, body).catch(() => null);
+  }, body).catch((error) => ({ code: -1, message: error.message }));
 
   const code = res?.Code ?? res?.code ?? -1;
-  return code === 0;
+  const message = String(res?.Msg || res?.message || res?.msg || '').trim();
+  return {
+    available: true,
+    success: code === 0,
+    response: { code, message },
+    reason: code === 0 ? '宠物面板已接收指令' : (message || '宠物面板指令失败'),
+    panelCommandMeta: {
+      inputId,
+      commandIds,
+      serverUrl,
+      isPetMsg,
+      commandMode
+    }
+  };
+}
+
+async function clickPanelAction(roomId, action, energy) {
+  const panelHtml = energy?.panelHtml || '';
+  const resolved = resolvePanelCommandInputId(panelHtml, action);
+  if (!resolved.inputId) {
+    return {
+      available: false,
+      success: false,
+      action,
+      inputId: '',
+      commandIds: resolved.commandIds,
+      response: { code: -1, message: `面板未找到「${PANEL_ACTION_LABELS[action] || action}」指令字段` },
+      reason: `面板未找到「${PANEL_ACTION_LABELS[action] || action}」指令字段；${formatPanelCommandIds(resolved.commandIds)}`,
+      resolveStrategy: resolved.strategy
+    };
+  }
+
+  const result = await sendPanelCommand(roomId, resolved.inputId, energy);
+  return {
+    ...result,
+    action,
+    inputId: resolved.inputId,
+    commandIds: resolved.commandIds,
+    resolveStrategy: resolved.strategy
+  };
+}
+
+async function doPanelSignin(roomId, energy) {
+  const currentEnergy = energy || await getPetEnergy(roomId).catch(() => null);
+  if (!currentEnergy) {
+    return {
+      accepted: false,
+      verified: false,
+      reason: '读取宠物面板失败，无法执行面板签到',
+      energyAfter: null
+    };
+  }
+
+  const action = await clickPanelAction(roomId, 'signin', currentEnergy);
+  const detail = {
+    accepted: !!action.success,
+    verified: false,
+    reason: action.reason || '',
+    response: action.response || null,
+    inputId: action.inputId || '',
+    commandIds: action.commandIds || [],
+    energyAfter: null
+  };
+
+  if (!detail.accepted) {
+    return detail;
+  }
+
+  await sleep(3000);
+  const after = await getPetEnergy(roomId).catch(() => null);
+  detail.energyAfter = after;
+
+  const responseText = String(action.response?.message || '').trim();
+  const afterResolved = after ? resolvePanelCommandInputId(after.panelHtml, 'signin') : null;
+  if (/已签到|已经签到|签到成功|重复|already|success/i.test(responseText)) {
+    detail.verified = true;
+    detail.reason = `面板返回：${responseText}`;
+  } else if (after && afterResolved && !afterResolved.inputId) {
+    detail.verified = true;
+    detail.reason = '面板复查后签到指令已消失，视为本轮已签到';
+  } else {
+    detail.reason = responseText
+      ? `面板已接收签到指令，但暂未拿到明确签到文案：${responseText}`
+      : '面板已接收签到指令，但暂未拿到明确签到文案';
+  }
+
+  return detail;
+}
+
+async function doCultivation(roomId, roomInfo, energy) {
+  const before = energy || await getPetEnergy(roomId).catch(() => null);
+  const detail = {
+    accepted: false,
+    verified: false,
+    reason: '',
+    response: null,
+    inputId: '',
+    commandIds: [],
+    energyBefore: before,
+    energyAfter: null,
+    gainCheck: null
+  };
+
+  if (!before) {
+    detail.reason = '读取宠物面板失败，无法执行面板修仙';
+    return detail;
+  }
+
+  log(`面板「修仙」前经验: ${before.current}/${before.total}（Lv.${before.level} ${before.levelName}）`);
+
+  const action = await clickPanelAction(roomId, 'cultivate', before);
+  detail.accepted = !!action.success;
+  detail.reason = action.reason || '';
+  detail.response = action.response || null;
+  detail.inputId = action.inputId || '';
+  detail.commandIds = action.commandIds || [];
+
+  if (!detail.accepted) {
+    return detail;
+  }
+
+  log(`面板「修仙」已发出（字段 ${detail.inputId}），进入经验复查...`);
+
+  let previousEnergy = before;
+  for (let round = 1; round <= 2; round++) {
+    await sleep(12000);
+    const hbOk = await sendHeartbeat(roomInfo).catch(() => false);
+    log(`修炼复查前心跳: ${hbOk ? '✅ 成功' : '⚠️ 失败（继续）'}`);
+
+    const after = await getPetEnergy(roomId).catch(() => null);
+    detail.energyAfter = after;
+    if (after) {
+      log(`修炼复查经验: ${after.current}/${after.total}（Lv.${after.level} ${after.levelName}）`);
+    }
+
+    detail.gainCheck = evaluateCultivationGain(before, after, {
+      round,
+      maxRounds: 2,
+      waitMs: 12000,
+      previousEnergy
+    });
+    detail.verified = detail.gainCheck.verified;
+    detail.reason = detail.gainCheck.reason;
+
+    const totalDeltaText = Number.isFinite(detail.gainCheck.delta) ? `累计 +${detail.gainCheck.delta}` : '累计增量未知';
+    const windowDeltaText = Number.isFinite(detail.gainCheck.windowDelta) ? `本轮 +${detail.gainCheck.windowDelta}` : '本轮增量未知';
+    log(`面板「修仙」第 ${round} 次校验: ${detail.verified ? '✅ 已确认生效' : '⚠️ 未确认生效'} - ${totalDeltaText} / ${windowDeltaText} - ${detail.reason}`);
+
+    if (detail.verified || !detail.gainCheck.needsAnotherCheck) {
+      break;
+    }
+    if (after) {
+      previousEnergy = after;
+    }
+  }
+
+  return detail;
 }
 
 // 判断突破就绪
@@ -484,41 +811,28 @@ function isBreakthroughReady(energy) {
   return energy && energy.breakthroughReady === true;
 }
 
-// 突破（面板优先，失败回退弹幕）
+// 突破（仅走宠物面板并复查）
 async function doBreakthrough(roomId, energy) {
   log(`🎉 命中突破条件 (${energy.current}/${energy.total})，尝试宠物面板突破...`);
-  const panelOk = await sendPanelCommand(roomId, 'lblTpMsg', energy);
-  if (panelOk) {
-    ok('宠物面板突破指令已发出，等待 15 秒复查...');
-    await sleep(15000);
-    const after = await getPetEnergy(roomId).catch(() => null);
-    const upgraded = after && (after.level !== energy.level || after.levelName !== energy.levelName || after.current < energy.current || after.total !== energy.total);
-    if (upgraded) {
-      ok(`突破成功！${energy.level} ${energy.levelName} → ${after.level} ${after.levelName}`);
-      return true;
-    }
-    warn('面板突破后复查未确认升级，改用弹幕兜底...');
-  } else {
-    warn('宠物面板突破失败，改用弹幕兜底...');
+  const action = await clickPanelAction(roomId, 'breakthrough', energy);
+  if (!action.success) {
+    warn(`面板「突破」失败：${action.reason}`);
+    return false;
   }
 
-  await sleep(DANMU_GAP_MS);
-  const danmuOk = await sendDanmu(roomId, '突破');
-  if (danmuOk) {
-    ok('弹幕「突破」已发出，等待 15 秒复查...');
-    await sleep(15000);
-    const after = await getPetEnergy(roomId).catch(() => null);
-    const upgraded = after && (after.level !== energy.level || after.levelName !== energy.levelName || after.current < energy.current || after.total !== energy.total);
-    if (upgraded) {
-      ok(`弹幕突破成功！${energy.level} ${energy.levelName} → ${after.level} ${after.levelName}`);
-      return true;
-    }
-    warn('弹幕突破后复查未确认升级');
-  } else {
-    warn('弹幕「突破」发送失败');
+  ok(`宠物面板「突破」已发出（字段 ${action.inputId}），等待 15 秒复查...`);
+  await sleep(15000);
+  const after = await getPetEnergy(roomId).catch(() => null);
+  const upgraded = after && (after.level !== energy.level || after.levelName !== energy.levelName || after.current < energy.current || after.total !== energy.total);
+  if (upgraded) {
+    ok(`突破成功！${energy.level} ${energy.levelName} → ${after.level} ${after.levelName}`);
+    return true;
   }
+
+  warn('面板「突破」复查未确认升级');
   return false;
 }
+
 
 // ==============================
 // 查找可用直播间（关播后备用）
@@ -575,7 +889,7 @@ async function findAnyLiveRoom(excludeRoomId) {
 
 
 // ==============================
-// 单轮循环：签到 + 修炼 + 突破检测
+// 单轮循环：面板签到 + 面板修仙 + 突破检测
 // ==============================
 async function runOneCycle(roomId, roomInfo, cycleIndex) {
   log(`\n========== 第 ${cycleIndex} 轮循环（直播间 ${roomId}） ==========`);
@@ -584,35 +898,46 @@ async function runOneCycle(roomId, roomInfo, cycleIndex) {
   const hbOk = await sendHeartbeat(roomInfo).catch(() => false);
   log(`心跳: ${hbOk ? '✅ 成功' : '⚠️ 失败（继续）'}`);
 
-  // 2. 签到（每日，重复签到接口自己会返回"已签到"）
+  // 2. 直播粉丝勋章签到（每日，重复签到接口自己会返回"已签到"）
   await sleep(DANMU_GAP_MS);
-  const signin = await doLiveSignin().catch(() => ({ ok: false, msg: '异常' }));
-  log(`签到: ${signin.ok ? '✅' : '⚠️'} ${signin.msg}`);
+  const liveSignin = await doLiveSignin().catch(() => ({ ok: false, msg: '异常' }));
+  log(`直播签到: ${liveSignin.ok ? '✅' : '⚠️'} ${liveSignin.msg}`);
 
-  // 3. 弹幕「签到」（宠物系统的每日签到指令）
+  // 3. 读取宠物面板，后续签到/修仙/突破都走面板点击
   await sleep(DANMU_GAP_MS);
-  const signinDanmuOk = await sendDanmu(roomId, '签到').catch(() => false);
-  log(`弹幕「签到」: ${signinDanmuOk ? '✅ 已发出' : '⚠️ 失败'}`);
+  const panelEnergy = await getPetEnergy(roomId).catch(() => null);
+  if (!panelEnergy) {
+    warn('读取宠物面板失败，无法执行面板签到/修仙/突破');
+    log('本轮完成');
+    return;
+  }
 
-  // 4. 弹幕「修炼」
+  log(`当前宠物经验: ${panelEnergy.current}/${panelEnergy.total}（Lv.${panelEnergy.level} ${panelEnergy.levelName}）`);
+
+  // 4. 面板「签到」
+  const panelSignin = await doPanelSignin(roomId, panelEnergy);
+  log(`面板「签到」: ${panelSignin.accepted ? (panelSignin.verified ? '✅ 已验证' : '⚠️ 已发出未确认') : '⚠️ 未发出'} ${panelSignin.reason}`);
+
+  // 5. 面板「修仙」并做经验校验
   await sleep(DANMU_GAP_MS);
-  const cultivOk = await sendDanmu(roomId, '修炼').catch(() => false);
-  log(`弹幕「修炼」: ${cultivOk ? '✅ 已发出' : '⚠️ 失败'}`);
+  const cultivation = await doCultivation(roomId, roomInfo, panelSignin.energyAfter || panelEnergy);
+  log(`面板「修仙」: ${cultivation.accepted ? (cultivation.verified ? '✅ 已确认生效' : '⚠️ 已发出未确认') : '⚠️ 未发出'} ${cultivation.reason}`);
 
-  // 5. 等 5 秒再读经验（让经验结算）
-  await sleep(5000);
-  const energy = await getPetEnergy(roomId).catch(() => null);
-  if (energy) {
-    log(`宠物经验: ${energy.current}/${energy.total}（Lv.${energy.level} ${energy.levelName}）`);
-    if (energy.breakthroughReady) {
-      await doBreakthrough(roomId, energy);
+  const energyAfterCultivation = cultivation.energyAfter || await getPetEnergy(roomId).catch(() => null);
+  if (energyAfterCultivation) {
+    log(`宠物经验: ${energyAfterCultivation.current}/${energyAfterCultivation.total}（Lv.${energyAfterCultivation.level} ${energyAfterCultivation.levelName}）`);
+    if (isBreakthroughReady(energyAfterCultivation)) {
+
+      await sleep(DANMU_GAP_MS);
+      await doBreakthrough(roomId, energyAfterCultivation);
     }
   } else {
-    warn('读取宠物经验失败（直播间可能无弹幕宠物或面板暂不可用）');
+    warn('修仙后读取宠物经验失败，无法继续判断是否需要突破');
   }
 
   log('本轮完成');
 }
+
 
 
 // ==============================
