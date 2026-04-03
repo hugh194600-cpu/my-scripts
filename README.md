@@ -1,102 +1,43 @@
-# B站自动化工具 🚀
+# B站弹幕宠物挂机
 
-[![B站弹幕宠物挂机](https://github.com/hugh194600-cpu/my-scripts/actions/workflows/hangup.yml/badge.svg)](https://github.com/hugh194600-cpu/my-scripts/actions/workflows/hangup.yml)
-[![边界AI签到](https://github.com/hugh194600-cpu/my-scripts/actions/workflows/yyai_signin.yml/badge.svg)](https://github.com/hugh194600-cpu/my-scripts/actions/workflows/yyai_signin.yml)
+## 功能
 
-基于 **GitHub Actions** 的自动化工具，当前仅保留已实测有效的两条链路：**B站弹幕宠物挂机修炼** 与 **边界AI签到**。
+- 进入配置的直播间，**每 10 分钟**自动执行：
+  1. 直播间粉丝勋章签到
+  2. 发弹幕「签到」（宠物系统签到）
+  3. 发弹幕「修炼」
+  4. 读取宠物经验，如命中突破条件则自动突破（优先面板，失败回退弹幕）
+- 直播间关播后自动切换到其他开播直播间，继续执行上述流程
+- Cookie 登录校验失败时，若已配置 `QQ_MAIL_USER` / `QQ_MAIL_PASS`，会自动发送失效通知邮件
+- 每次 GitHub Actions 运行持续约 350 分钟，每 6 小时触发一次
 
-## ✨ 功能
 
-| 工作流 | 触发时间 | 功能 |
-|--------|---------|------|
-| 弹幕宠物挂机修炼 | 每 10 分钟 | 扫描开播的弹幕宠物直播间，发修炼指令，校验经验增量，满经验自动突破 |
-| 边界AI签到 | 每天 08:05 / 10:05（北京时间） | yyai8.com 每日签到，token 失效时发邮件通知 |
-
-## 🚀 快速部署
-
-### 第一步：Fork 本仓库
-
-点击右上角 **Fork**，复制到你自己的 GitHub 账号。
-
-### 第二步：配置 GitHub Secrets
-
-进入你 Fork 的仓库 → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**
-
-**B站相关（必填）：**
+## 配置项（GitHub Secrets）
 
 | Secret 名称 | 说明 |
-|------------|------|
-| `BILIBILI_COOKIE` | B站登录 Cookie（从浏览器 F12 → Network → 任意 B 站请求的 Cookie 头复制） |
-| `BILIBILI_UID` | B站用户 UID（个人主页 URL 里的数字） |
+|---|---|
+| `BILIBILI_COOKIE` | B站登录 Cookie（完整字符串） |
+| `BILIBILI_UID` | B站 UID（可选，辅助心跳） |
+| `HANGUP_ROOM_ID` | 首选直播间房间号（若未开播则自动换房） |
+| `QQ_MAIL_USER` | QQ邮箱地址（Cookie 失效通知，可选） |
+| `QQ_MAIL_PASS` | QQ邮箱授权码（可选） |
 
-**挂机相关（可选但推荐）：**
+## 运行方式
 
-| Secret 名称 | 说明 | 默认值 |
-|------------|------|-------|
-| `PET_PRIORITY_ROOMS` | 历史确认打出过 +19 的优先房间号，逗号分隔 | 默认留空，建议只填最新实测有效房间 |
-| `HANGUP_ROOM_ID` | 备选挂机房间 | `5456135` |
-| `RANDOM_ROOMS` | 随机心跳直播间列表，逗号分隔 | `732,6,1,76,488,21452505` |
+- **定时**：每天北京时间 02:00 / 08:00 / 14:00 / 20:00 自动触发
+- **手动**：GitHub Actions → Run workflow，可自定义：
+  - `cycle_minutes`：每轮间隔（默认 10 分钟）
+  - `max_runtime_minutes`：最大运行时长（默认 350 分钟）
 
-**邮件通知（可选但推荐）：**
+## 费用估算（私有仓 2000 分钟/月）
 
-| Secret 名称 | 说明 |
-|------------|------|
-| `QQ_MAIL_USER` | QQ 邮箱地址 |
-| `QQ_MAIL_PASS` | QQ 邮箱授权码（不是登录密码，在 QQ 邮箱设置 → SMTP 里生成） |
+| 触发频率 | 每次时长 | 每月消耗 |
+|---|---|---|
+| 每6小时（4次/天） | 350 分钟 | 4 × 30 × 1 ≈ 120 次 × 6 分钟计费 ≈ **约 720 分钟** |
 
-**边界AI相关（仅使用边界AI签到时需要）：**
+> 实际每次 Actions run 持续约 350 分钟，按 GitHub 计费向上取整到分钟，**月消耗远低于 2000 分钟额度**。
 
-| Secret 名称 | 说明 |
-|------------|------|
-| `YYAI_TOKEN` | 边界AI短 token（yyai8.com F12 → Network → 签到请求 Headers 里） |
-| `YYAI_ACCESS_TOKEN` | 边界AI access-token（同上） |
-| `YYAI_UID` | 边界AI uid（同上） |
+## 日志说明
 
-### 第三步：手动触发测试
-
-1. 进入 **Actions** 标签页
-2. 左侧选择 **B站弹幕宠物挂机修炼**
-3. 点击 **Run workflow** → **Run workflow**
-4. 等待完成后查看日志，重点确认经验增量是否达到有效修炼档位
-5. 如需验证边界AI，再单独手动触发 **边界AI每日签到**
-
-## 🔧 挂机修炼说明
-
-- 每 10 分钟执行一次，自动扫描已开播且开启弹幕宠物的直播间
-- 优先检查 `PET_PRIORITY_ROOMS` 配置的房间，再自动扫描
-- 触发修炼顺序：**宠物面板「修仙」 → 直播弹幕「修炼」 → 直播弹幕「修仙」**
-- 触发后先做一次 12 秒复查；若经验仍像 `+14` 基础收益或出现 `+28 / +42` 这类 `+14` 倍数，再自动补做第二次 12 秒复查，排除经验显示滞后
-- 两轮复查后，只有累计增量达到有效修炼档位且**不是 `+14` 的倍数**，才算确认修炼成功
-- 若经验已满，优先通过宠物面板发送「突破」，失败时回退到直播弹幕「突破」
-- 单次最多尝试 3 个候选直播间
-
-## ⚙️ 本地运行
-
-```bash
-git clone https://github.com/hugh194600-cpu/my-scripts.git
-cd my-scripts
-npm install
-cp .env.example .env
-# 编辑 .env 填入 BILIBILI_COOKIE 等配置
-node src/index.js
-```
-
-## ⚠️ 注意事项
-
-- **Cookie 有效期**：B站 Cookie 通常数月有效，但登出或修改密码后会立即失效；失效后程序会发邮件通知
-- **GitHub Actions 免费额度**：公开仓库完全免费，无分钟限制；私有仓库每月有 2000 分钟免费额度
-- **挂机频率**：每 10 分钟一次，每次运行约 1-2 分钟，私有仓库用量极低
-- 本项目仅供学习研究，请遵守 B 站用户协议，风险自负
-
-## 📝 更新日志
-
-### v2.0.0 (2026-04-02)
-- ✅ 从腾讯云 SCF 全面迁移到 GitHub Actions（完全免费）
-- ✅ 仅保留已实测有效的两条工作流：弹幕宠物挂机修炼 + 边界AI签到
-- ✅ 修炼触发链路：宠物面板 + 直播弹幕双重保障
-- ✅ 支持最多两轮 12 秒增量复查，避开 `+14` 倍数导致的经验显示滞后误判
-- ✅ 满经验自动突破（面板优先，弹幕兜底）
-- ✅ 返回值内置触发顺序 / 实际执行路径 / 突破链路可见
-
-### v1.0.0 (2026-03-24)
-- ✅ 初始版本：自动化任务 + 挂机修炼 + GitHub Actions 集成
+- 每轮结果直接打印到 Actions 日志
+- 格式：`[北京时间] 操作描述`，`✅` 表示成功，`⚠️` 表示轻微异常，`❌` 表示严重错误

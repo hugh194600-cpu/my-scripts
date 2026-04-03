@@ -1,21 +1,25 @@
-name: B站弹幕宠物挂机修炼
+name: B站弹幕宠物挂机
 
 on:
   schedule:
-    # 每10分钟触发一次（北京时间，UTC+8）
-    - cron: '*/10 * * * *'
+    # 每6小时触发一次（北京时间 02:00 / 08:00 / 14:00 / 20:00）
+    - cron: '0 18,0,6,12 * * *'
   workflow_dispatch:
     inputs:
-      task:
-        description: '执行任务 (hangup)'
+      cycle_minutes:
+        description: '每轮间隔（分钟），默认 10'
         required: false
-        default: 'hangup'
+        default: '10'
+      max_runtime_minutes:
+        description: '最大运行时长（分钟），默认 350'
+        required: false
+        default: '350'
 
 jobs:
   hangup:
-    name: 弹幕宠物挂机修炼
+    name: 弹幕宠物挂机
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 360
 
     steps:
       - name: 检出代码
@@ -27,16 +31,15 @@ jobs:
           node-version: '20'
 
       - name: 安装依赖
-        run: npm install
+        run: npm install --no-audit --no-fund
 
       - name: 执行挂机
         env:
           BILIBILI_COOKIE: ${{ secrets.BILIBILI_COOKIE }}
           BILIBILI_UID: ${{ secrets.BILIBILI_UID }}
           HANGUP_ROOM_ID: ${{ secrets.HANGUP_ROOM_ID }}
-          PET_PRIORITY_ROOMS: ${{ secrets.PET_PRIORITY_ROOMS }}
-          RANDOM_ROOMS: ${{ secrets.RANDOM_ROOMS }}
           QQ_MAIL_USER: ${{ secrets.QQ_MAIL_USER }}
           QQ_MAIL_PASS: ${{ secrets.QQ_MAIL_PASS }}
-          TASK: hangup
+          CYCLE_MINUTES: ${{ github.event.inputs.cycle_minutes || '10' }}
+          MAX_RUNTIME_MINUTES: ${{ github.event.inputs.max_runtime_minutes || '350' }}
         run: node src/index.js
