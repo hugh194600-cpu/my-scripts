@@ -524,33 +524,55 @@ async function doBreakthrough(roomId, energy) {
 // 查找可用直播间（关播后备用）
 // ==============================
 async function findAnyLiveRoom(excludeRoomId) {
-  // 1. 先扫描直播列表找带弹幕宠物的
-  const paths = [
-    '/xlive/web-interface/v1/second/getList?platform=web&parent_area_id=0&area_id=0&sort_type=&page=1',
-    '/xlive/web-interface/v1/index/getList?platform=web&page=1&page_size=30'
-  ];
-  for (const p of paths) {
+  const seen = new Set();
+  const candidateIds = [];
+
+  const pushCandidate = (id) => {
+    const roomId = String(id || '').trim();
+    if (!roomId || roomId === String(excludeRoomId) || seen.has(roomId)) return;
+    seen.add(roomId);
+    candidateIds.push(roomId);
+  };
+
+  // 1. 扫描当前可用的推荐直播列表
+  for (const page of [1, 2]) {
     try {
-      const res = await liveGet(p);
-      const list = Array.isArray(res?.data?.list) ? res.data.list
-                 : (Array.isArray(res?.data?.rooms) ? res.data.rooms : []);
-      for (const r of list) {
-        const id = String(r.roomid || r.room_id || '');
-        if (!id || id === String(excludeRoomId)) continue;
-        // 简单：只要是开播的就返回，后续会再检测弹幕宠物
-        return id;
+      const res = await liveGet(`/xlive/web-interface/v1/index/getList?platform=web&page=${page}&page_size=30`);
+      const groups = [
+        ...(Array.isArray(res?.data?.room_list?.list) ? res.data.room_list.list : []),
+        ...(Array.isArray(res?.data?.recommend_room_list?.list) ? res.data.recommend_room_list.list : []),
+        ...(Array.isArray(res?.data?.list) ? res.data.list : []),
+      ];
+
+      for (const item of groups) {
+        if (Array.isArray(item?.list)) {
+          for (const room of item.list) pushCandidate(room.roomid || room.room_id);
+        } else {
+          pushCandidate(item.roomid || item.room_id);
+        }
       }
     } catch (_) {}
   }
+
   // 2. 备用固定房
-  const fallback = ['732', '3', '5441', '1013'];
-  for (const id of fallback) {
-    if (id === String(excludeRoomId)) continue;
-    const status = await getRoomStatus(id).catch(() => null);
-    if (status && status.isLive) return id;
+  for (const id of ['732', '3', '5441', '1013']) {
+    pushCandidate(id);
   }
+
+  for (const id of candidateIds) {
+    const status = await getRoomStatus(id).catch(() => null);
+    if (!status || !status.isLive) continue;
+
+    const panel = await getPanelUrl(id).catch(() => null);
+    if (panel?.panelUrl) {
+      log(`自动命中可用弹幕宠物直播间: ${id}`);
+      return id;
+    }
+  }
+
   return null;
 }
+
 
 // ==============================
 // 单轮循环：签到 + 修炼 + 突破检测
