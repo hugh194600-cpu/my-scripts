@@ -1,8 +1,9 @@
 /**
  * B站弹幕宠物挂机 - 精简版
- * 逻辑：进入直播间 → 每10分钟循环（面板签到 → 面板修仙 → 突破检测）
- *       直播间关播后自动换房继续
+ * 逻辑：进入直播间 → 每10分钟循环（弹幕签到 → 弹幕修炼 → 突破检测）
+ *       经验与升级结果仍通过蛋宠面板复查，直播间关播后自动换房继续
  */
+
 
 
 const net = require('net');
@@ -547,62 +548,8 @@ function resolvePanelCommandInputId(panelHtml, action) {
   return { inputId: '', commandIds, strategy: 'missing' };
 }
 
-function isSigninConfirmedText(text) {
-  return /已签到|已经签到|签到成功|今日已签|重复|already|success/i.test(String(text || '').trim());
-}
-
-function extractSigninVerificationHints(panelHtml) {
-  const normalizedHtml = String(panelHtml || '').replace(/\s+/g, '');
-  const hints = [];
-
-  if (/今日已签|今日已签到|已经签到|签到成功|已领签到奖励|签到奖励已领取/.test(normalizedHtml)) {
-    hints.push('面板文案显示已签到');
-  }
-  if (/已完成签到/.test(normalizedHtml)) {
-    hints.push('面板文案显示已完成签到');
-  }
-
-  return hints;
-}
-
-function evaluateSigninResult(beforeEnergy, afterEnergy, responseText, attempt) {
-  const response = String(responseText || '').trim();
-  const beforeResolved = beforeEnergy ? resolvePanelCommandInputId(beforeEnergy.panelHtml, 'signin') : null;
-  const afterResolved = afterEnergy ? resolvePanelCommandInputId(afterEnergy.panelHtml, 'signin') : null;
-  const beforePayload = beforeResolved?.inputId ? extractInput(beforeEnergy?.panelHtml, beforeResolved.inputId) : '';
-  const afterPayload = afterResolved?.inputId ? extractInput(afterEnergy?.panelHtml, afterResolved.inputId) : '';
-  const afterHints = extractSigninVerificationHints(afterEnergy?.panelHtml || '');
-  const prefix = `第 ${attempt} 次签到校验`;
-
-  if (isSigninConfirmedText(response)) {
-    return { verified: true, reason: `${prefix}命中明确回执：${response}` };
-  }
-
-  if (afterHints.length > 0) {
-    return { verified: true, reason: `${prefix}命中面板文案：${afterHints.join('；')}` };
-  }
-
-  if (afterEnergy && beforeResolved?.inputId && !afterResolved?.inputId) {
-    return { verified: true, reason: `${prefix}复查后签到指令已消失，视为本轮已签到` };
-  }
-
-  if (!afterEnergy) {
-    return { verified: false, reason: `${prefix}复查时未读到完整面板，无法确认是否到账` };
-  }
-
-  if (beforePayload && afterPayload && beforePayload !== afterPayload) {
-    return { verified: false, reason: `${prefix}后签到指令载荷已变化，但仍缺少明确“已签到/重复签到”证据` };
-  }
-
-  return {
-    verified: false,
-    reason: response
-      ? `${prefix}回执为“${response}”，但面板状态仍不足以确认签到到账`
-      : `${prefix}面板已接收签到指令，但复查后仍缺少明确到账证据`
-  };
-}
-
 // 获取 panel_url
+
 
 async function getPanelUrl(roomId) {
 
@@ -746,84 +693,20 @@ async function clickPanelAction(roomId, action, energy) {
 }
 
 async function doPanelSignin(roomId, energy) {
-  let currentEnergy = energy || await getPetEnergy(roomId).catch(() => null);
-  if (!currentEnergy) {
-    return {
-      accepted: false,
-      verified: false,
-      reason: '读取宠物面板失败，无法执行面板签到',
-      energyAfter: null
-    };
-  }
+  const currentEnergy = energy || await getPetEnergy(roomId).catch(() => null);
+  const sent = await sendDanmu(roomId, '签到').catch(() => false);
 
-  const initialResolved = resolvePanelCommandInputId(currentEnergy.panelHtml, 'signin');
-  const initialHints = extractSigninVerificationHints(currentEnergy.panelHtml);
-  if (!initialResolved.inputId && initialHints.length > 0) {
-    return {
-      accepted: true,
-      verified: true,
-      reason: `进入本轮前已命中签到完成状态：${initialHints.join('；')}`,
-      response: null,
-      inputId: '',
-      commandIds: initialResolved.commandIds || [],
-      energyAfter: currentEnergy
-    };
-  }
-
-  const detail = {
-    accepted: false,
+  return {
+    accepted: sent,
     verified: false,
-    reason: '',
+    reason: sent
+      ? '直播弹幕「签到」已发出；当前不再依赖蛋宠面板回执做到账校验'
+      : '发送直播弹幕「签到」失败',
     response: null,
-    inputId: initialResolved.inputId || '',
-    commandIds: initialResolved.commandIds || [],
-    energyAfter: null,
-    attempts: 0
+    inputId: '',
+    commandIds: currentEnergy ? extractPanelCommandIds(currentEnergy.panelHtml) : [],
+    energyAfter: currentEnergy || null
   };
-
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    const action = await clickPanelAction(roomId, 'signin', currentEnergy);
-    detail.attempts = attempt;
-    detail.accepted = detail.accepted || !!action.success;
-    detail.reason = action.reason || detail.reason;
-    detail.response = action.response || detail.response;
-    detail.inputId = action.inputId || detail.inputId;
-    detail.commandIds = Array.isArray(action.commandIds) && action.commandIds.length > 0
-      ? action.commandIds
-      : detail.commandIds;
-
-    if (!action.success) {
-      if (!detail.accepted) {
-        return detail;
-      }
-      detail.reason = `第 ${attempt} 次签到补发未成功：${action.reason}`;
-      return detail;
-    }
-
-    if (attempt > 1) {
-      log(`面板「签到」第 ${attempt} 次幂等校验已发出（字段 ${action.inputId}），继续复查...`);
-    }
-
-    await sleep(3000);
-    const after = await getPetEnergy(roomId).catch(() => null);
-    detail.energyAfter = after || detail.energyAfter;
-
-    const verification = evaluateSigninResult(currentEnergy, after, action.response?.message, attempt);
-    detail.reason = verification.reason;
-    if (verification.verified) {
-      detail.verified = true;
-      return detail;
-    }
-
-    if (attempt === 2 || !after) {
-      return detail;
-    }
-
-    log('面板「签到」首次复查仍未确认，补发一次签到做幂等校验...');
-    currentEnergy = after;
-  }
-
-  return detail;
 }
 
 
@@ -841,25 +724,24 @@ async function doCultivation(roomId, roomInfo, energy) {
     gainCheck: null
   };
 
-  if (!before) {
-    detail.reason = '读取宠物面板失败，无法执行面板修仙';
-    return detail;
+  if (before) {
+    log(`弹幕「修炼」前经验: ${before.current}/${before.total}（Lv.${before.level} ${before.levelName}）`);
+  } else {
+    warn('当前未读到宠物面板基线经验，先直接发送弹幕「修炼」，本轮无法做真实生效校验');
   }
 
-  log(`面板「修仙」前经验: ${before.current}/${before.total}（Lv.${before.level} ${before.levelName}）`);
-
-  const action = await clickPanelAction(roomId, 'cultivate', before);
-  detail.accepted = !!action.success;
-  detail.reason = action.reason || '';
-  detail.response = action.response || null;
-  detail.inputId = action.inputId || '';
-  detail.commandIds = action.commandIds || [];
+  detail.accepted = await sendDanmu(roomId, '修炼').catch(() => false);
+  detail.reason = detail.accepted ? '直播弹幕「修炼」已发出' : '发送直播弹幕「修炼」失败';
 
   if (!detail.accepted) {
     return detail;
   }
 
-  log(`面板「修仙」已发出（字段 ${detail.inputId}），进入经验复查...`);
+  if (!before) {
+    return detail;
+  }
+
+  log('弹幕「修炼」已发出，进入经验复查...');
 
   let previousEnergy = before;
   for (let round = 1; round <= 2; round++) {
@@ -884,7 +766,7 @@ async function doCultivation(roomId, roomInfo, energy) {
 
     const totalDeltaText = Number.isFinite(detail.gainCheck.delta) ? `累计 +${detail.gainCheck.delta}` : '累计增量未知';
     const windowDeltaText = Number.isFinite(detail.gainCheck.windowDelta) ? `本轮 +${detail.gainCheck.windowDelta}` : '本轮增量未知';
-    log(`面板「修仙」第 ${round} 次校验: ${detail.verified ? '✅ 已确认生效' : '⚠️ 未确认生效'} - ${totalDeltaText} / ${windowDeltaText} - ${detail.reason}`);
+    log(`弹幕「修炼」第 ${round} 次校验: ${detail.verified ? '✅ 已确认生效' : '⚠️ 未确认生效'} - ${totalDeltaText} / ${windowDeltaText} - ${detail.reason}`);
 
     if (detail.verified || !detail.gainCheck.needsAnotherCheck) {
       break;
@@ -902,16 +784,16 @@ function isBreakthroughReady(energy) {
   return energy && energy.breakthroughReady === true;
 }
 
-// 突破（仅走宠物面板并复查）
+// 突破（改回直播弹幕触发，并继续做升级复查）
 async function doBreakthrough(roomId, energy) {
-  log(`🎉 命中突破条件 (${energy.current}/${energy.total})，尝试宠物面板突破...`);
-  const action = await clickPanelAction(roomId, 'breakthrough', energy);
-  if (!action.success) {
-    warn(`面板「突破」失败：${action.reason}`);
+  log(`🎉 命中突破条件 (${energy.current}/${energy.total})，尝试发送直播弹幕「突破」...`);
+  const sent = await sendDanmu(roomId, '突破').catch(() => false);
+  if (!sent) {
+    warn('发送直播弹幕「突破」失败');
     return false;
   }
 
-  ok(`宠物面板「突破」已发出（字段 ${action.inputId}），等待 15 秒复查...`);
+  ok('直播弹幕「突破」已发出，等待 15 秒复查...');
   await sleep(15000);
   const after = await getPetEnergy(roomId).catch(() => null);
   const upgraded = after && (after.level !== energy.level || after.levelName !== energy.levelName || after.current < energy.current || after.total !== energy.total);
@@ -920,9 +802,10 @@ async function doBreakthrough(roomId, energy) {
     return true;
   }
 
-  warn('面板「突破」复查未确认升级');
+  warn('弹幕「突破」复查未确认升级');
   return false;
 }
+
 
 
 // ==============================
@@ -994,27 +877,26 @@ async function runOneCycle(roomId, roomInfo, cycleIndex) {
   const liveSignin = await doLiveSignin().catch(() => ({ ok: false, msg: '异常' }));
   log(`直播签到: ${liveSignin.ok ? '✅' : '⚠️'} ${liveSignin.msg}`);
 
-  // 3. 读取宠物面板，后续签到/修仙/突破都走面板点击
+  // 3. 尝试读取宠物面板，主要用于经验校验与突破判断；触发方式已改回弹幕
   await sleep(DANMU_GAP_MS);
   const panelEnergy = await getPetEnergy(roomId).catch(() => null);
-  if (!panelEnergy) {
-    warn('读取宠物面板失败，无法执行面板签到/修仙/突破');
-    log('本轮完成');
-    return;
+  if (panelEnergy) {
+    log(`当前宠物经验: ${panelEnergy.current}/${panelEnergy.total}（Lv.${panelEnergy.level} ${panelEnergy.levelName}）`);
+  } else {
+    warn('当前未读到宠物面板，本轮先按弹幕方式发送签到/修炼；经验与突破复查可能缺失');
   }
 
-  log(`当前宠物经验: ${panelEnergy.current}/${panelEnergy.total}（Lv.${panelEnergy.level} ${panelEnergy.levelName}）`);
-
-  // 4. 面板「签到」
+  // 4. 弹幕「签到」
   const panelSignin = await doPanelSignin(roomId, panelEnergy);
-  log(`面板「签到」: ${panelSignin.accepted ? (panelSignin.verified ? '✅ 已验证' : '⚠️ 已发出未确认') : '⚠️ 未发出'} ${panelSignin.reason}`);
+  log(`弹幕「签到」: ${panelSignin.accepted ? (panelSignin.verified ? '✅ 已验证' : '⚠️ 已发出未确认') : '⚠️ 未发出'} ${panelSignin.reason}`);
 
-  // 5. 面板「修仙」并做经验校验
+  // 5. 弹幕「修炼」并尽量做经验校验
   await sleep(DANMU_GAP_MS);
   const cultivation = await doCultivation(roomId, roomInfo, panelSignin.energyAfter || panelEnergy);
-  log(`面板「修仙」: ${cultivation.accepted ? (cultivation.verified ? '✅ 已确认生效' : '⚠️ 已发出未确认') : '⚠️ 未发出'} ${cultivation.reason}`);
+  log(`弹幕「修炼」: ${cultivation.accepted ? (cultivation.verified ? '✅ 已确认生效' : '⚠️ 已发出未确认') : '⚠️ 未发出'} ${cultivation.reason}`);
 
   const energyAfterCultivation = cultivation.energyAfter || await getPetEnergy(roomId).catch(() => null);
+
   if (energyAfterCultivation) {
     log(`宠物经验: ${energyAfterCultivation.current}/${energyAfterCultivation.total}（Lv.${energyAfterCultivation.level} ${energyAfterCultivation.levelName}）`);
     if (isBreakthroughReady(energyAfterCultivation)) {
@@ -1023,7 +905,8 @@ async function runOneCycle(roomId, roomInfo, cycleIndex) {
       await doBreakthrough(roomId, energyAfterCultivation);
     }
   } else {
-    warn('修仙后读取宠物经验失败，无法继续判断是否需要突破');
+    warn('修炼后读取宠物经验失败，无法继续判断是否需要突破');
+
   }
 
   log('本轮完成');
