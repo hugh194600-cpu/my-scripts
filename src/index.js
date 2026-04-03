@@ -547,7 +547,63 @@ function resolvePanelCommandInputId(panelHtml, action) {
   return { inputId: '', commandIds, strategy: 'missing' };
 }
 
+function isSigninConfirmedText(text) {
+  return /已签到|已经签到|签到成功|今日已签|重复|already|success/i.test(String(text || '').trim());
+}
+
+function extractSigninVerificationHints(panelHtml) {
+  const normalizedHtml = String(panelHtml || '').replace(/\s+/g, '');
+  const hints = [];
+
+  if (/今日已签|今日已签到|已经签到|签到成功|已领签到奖励|签到奖励已领取/.test(normalizedHtml)) {
+    hints.push('面板文案显示已签到');
+  }
+  if (/已完成签到/.test(normalizedHtml)) {
+    hints.push('面板文案显示已完成签到');
+  }
+
+  return hints;
+}
+
+function evaluateSigninResult(beforeEnergy, afterEnergy, responseText, attempt) {
+  const response = String(responseText || '').trim();
+  const beforeResolved = beforeEnergy ? resolvePanelCommandInputId(beforeEnergy.panelHtml, 'signin') : null;
+  const afterResolved = afterEnergy ? resolvePanelCommandInputId(afterEnergy.panelHtml, 'signin') : null;
+  const beforePayload = beforeResolved?.inputId ? extractInput(beforeEnergy?.panelHtml, beforeResolved.inputId) : '';
+  const afterPayload = afterResolved?.inputId ? extractInput(afterEnergy?.panelHtml, afterResolved.inputId) : '';
+  const afterHints = extractSigninVerificationHints(afterEnergy?.panelHtml || '');
+  const prefix = `第 ${attempt} 次签到校验`;
+
+  if (isSigninConfirmedText(response)) {
+    return { verified: true, reason: `${prefix}命中明确回执：${response}` };
+  }
+
+  if (afterHints.length > 0) {
+    return { verified: true, reason: `${prefix}命中面板文案：${afterHints.join('；')}` };
+  }
+
+  if (afterEnergy && beforeResolved?.inputId && !afterResolved?.inputId) {
+    return { verified: true, reason: `${prefix}复查后签到指令已消失，视为本轮已签到` };
+  }
+
+  if (!afterEnergy) {
+    return { verified: false, reason: `${prefix}复查时未读到完整面板，无法确认是否到账` };
+  }
+
+  if (beforePayload && afterPayload && beforePayload !== afterPayload) {
+    return { verified: false, reason: `${prefix}后签到指令载荷已变化，但仍缺少明确“已签到/重复签到”证据` };
+  }
+
+  return {
+    verified: false,
+    reason: response
+      ? `${prefix}回执为“${response}”，但面板状态仍不足以确认签到到账`
+      : `${prefix}面板已接收签到指令，但复查后仍缺少明确到账证据`
+  };
+}
+
 // 获取 panel_url
+
 async function getPanelUrl(roomId) {
 
   // 从直播间页面提取 game_id
@@ -690,7 +746,7 @@ async function clickPanelAction(roomId, action, energy) {
 }
 
 async function doPanelSignin(roomId, energy) {
-  const currentEnergy = energy || await getPetEnergy(roomId).catch(() => null);
+  let currentEnergy = energy || await getPetEnergy(roomId).catch(() => null);
   if (!currentEnergy) {
     return {
       accepted: false,
@@ -700,41 +756,76 @@ async function doPanelSignin(roomId, energy) {
     };
   }
 
-  const action = await clickPanelAction(roomId, 'signin', currentEnergy);
-  const detail = {
-    accepted: !!action.success,
-    verified: false,
-    reason: action.reason || '',
-    response: action.response || null,
-    inputId: action.inputId || '',
-    commandIds: action.commandIds || [],
-    energyAfter: null
-  };
-
-  if (!detail.accepted) {
-    return detail;
+  const initialResolved = resolvePanelCommandInputId(currentEnergy.panelHtml, 'signin');
+  const initialHints = extractSigninVerificationHints(currentEnergy.panelHtml);
+  if (!initialResolved.inputId && initialHints.length > 0) {
+    return {
+      accepted: true,
+      verified: true,
+      reason: `进入本轮前已命中签到完成状态：${initialHints.join('；')}`,
+      response: null,
+      inputId: '',
+      commandIds: initialResolved.commandIds || [],
+      energyAfter: currentEnergy
+    };
   }
 
-  await sleep(3000);
-  const after = await getPetEnergy(roomId).catch(() => null);
-  detail.energyAfter = after;
+  const detail = {
+    accepted: false,
+    verified: false,
+    reason: '',
+    response: null,
+    inputId: initialResolved.inputId || '',
+    commandIds: initialResolved.commandIds || [],
+    energyAfter: null,
+    attempts: 0
+  };
 
-  const responseText = String(action.response?.message || '').trim();
-  const afterResolved = after ? resolvePanelCommandInputId(after.panelHtml, 'signin') : null;
-  if (/已签到|已经签到|签到成功|重复|already|success/i.test(responseText)) {
-    detail.verified = true;
-    detail.reason = `面板返回：${responseText}`;
-  } else if (after && afterResolved && !afterResolved.inputId) {
-    detail.verified = true;
-    detail.reason = '面板复查后签到指令已消失，视为本轮已签到';
-  } else {
-    detail.reason = responseText
-      ? `面板已接收签到指令，但暂未拿到明确签到文案：${responseText}`
-      : '面板已接收签到指令，但暂未拿到明确签到文案';
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const action = await clickPanelAction(roomId, 'signin', currentEnergy);
+    detail.attempts = attempt;
+    detail.accepted = detail.accepted || !!action.success;
+    detail.reason = action.reason || detail.reason;
+    detail.response = action.response || detail.response;
+    detail.inputId = action.inputId || detail.inputId;
+    detail.commandIds = Array.isArray(action.commandIds) && action.commandIds.length > 0
+      ? action.commandIds
+      : detail.commandIds;
+
+    if (!action.success) {
+      if (!detail.accepted) {
+        return detail;
+      }
+      detail.reason = `第 ${attempt} 次签到补发未成功：${action.reason}`;
+      return detail;
+    }
+
+    if (attempt > 1) {
+      log(`面板「签到」第 ${attempt} 次幂等校验已发出（字段 ${action.inputId}），继续复查...`);
+    }
+
+    await sleep(3000);
+    const after = await getPetEnergy(roomId).catch(() => null);
+    detail.energyAfter = after || detail.energyAfter;
+
+    const verification = evaluateSigninResult(currentEnergy, after, action.response?.message, attempt);
+    detail.reason = verification.reason;
+    if (verification.verified) {
+      detail.verified = true;
+      return detail;
+    }
+
+    if (attempt === 2 || !after) {
+      return detail;
+    }
+
+    log('面板「签到」首次复查仍未确认，补发一次签到做幂等校验...');
+    currentEnergy = after;
   }
 
   return detail;
 }
+
 
 async function doCultivation(roomId, roomInfo, energy) {
   const before = energy || await getPetEnergy(roomId).catch(() => null);
