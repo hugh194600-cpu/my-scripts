@@ -1,4 +1,4 @@
-﻿/**
+﻿﻿/**
  * B站弹幕宠物挂机 - 精简版
  * 逻辑：进入直播间 → 每10分钟循环（弹幕签到 → 弹幕修炼 → 突破检测）
  *       经验与升级结果仍通过蛋宠面板复查，直播间关播后自动换房继续
@@ -753,17 +753,34 @@ async function doPanelSignin(roomId, energy) {
 }
 
 
-// 【新增】单次修炼：发送弹幕 + 等待复查 + 返回结果
+// 【增强】单次修炼：发送弹幕 + 等待复查 + 返回结果
+// 修复 +14 问题：修炼期间增加心跳频率保持在线状态，修炼后立即读取面板
 async function doSingleCultivation(roomId, roomInfo, beforeEnergy) {
   const sent = await sendDanmu(roomId, '修炼').catch(() => false);
   if (!sent) {
     return { accepted: false, verified: false, energyAfter: null, reason: '发送弹幕「修炼」失败' };
   }
 
+  // 【修复】修炼期间保持高频心跳（每 5 秒一次，持续 10 秒），确保在线状态
+  const heartbeatInterval = 5000;
+  const heartbeatDuration = 10000;
+  const heartbeatStart = Date.now();
+  
+  const heartbeatPromise = (async () => {
+    while (Date.now() - heartbeatStart < heartbeatDuration) {
+      await sendHeartbeat(roomInfo).catch(() => false);
+      await sleep(heartbeatInterval);
+    }
+  })();
+
+  // 等待面板刷新（给 B站 时间处理修炼加成）
   const waitMs = CULTIVATION_WAIT_SECONDS * 1000;
   await sleep(waitMs);
-  await sendHeartbeat(roomInfo).catch(() => false);
 
+  // 等待心跳完成
+  await heartbeatPromise;
+
+  // 【修复】修炼后立即读取面板（减少在线基础收益的混入）
   const after = await getPetEnergy(roomId).catch(() => null);
   const gainCheck = evaluateCultivationGain(beforeEnergy, after, {
     round: 1, maxRounds: 1, waitMs
@@ -817,6 +834,7 @@ async function cultivateUntilFull(roomId, roomInfo, startEnergy) {
   return current;
 }
 
+// 【增强】doCultivation 也增加修炼期间高频心跳，确保修炼加成触发
 async function doCultivation(roomId, roomInfo, energy) {
   const before = energy || await getPetEnergy(roomId).catch(() => null);
   const detail = {
@@ -848,40 +866,43 @@ async function doCultivation(roomId, roomInfo, energy) {
     return detail;
   }
 
-  log('弹幕「修炼」已发出，进入经验复查...');
+  log('弹幕「修炼」已发出，进入经验复查（高频心跳保活）...');
 
-  let previousEnergy = before;
-  for (let round = 1; round <= 2; round++) {
-    await sleep(12000);
-    const hbOk = await sendHeartbeat(roomInfo).catch(() => false);
-    log(`修炼复查前心跳: ${hbOk ? '✅ 成功' : '⚠️ 失败（继续）'}`);
+  // 【修复】修炼后立即读取面板，减少基础收益混入
+  await sleep(12000);
 
-    const after = await getPetEnergy(roomId).catch(() => null);
-    detail.energyAfter = after;
-    if (after) {
-      log(`修炼复查经验: ${after.current}/${after.total}（Lv.${after.level} ${after.levelName}）`);
+  // 【修复】修炼复查期间增加心跳频率
+  const heartbeatInterval = 5000;
+  const heartbeatDuration = 12000;
+  const heartbeatStart = Date.now();
+  
+  const heartbeatPromise = (async () => {
+    while (Date.now() - heartbeatStart < heartbeatDuration) {
+      await sendHeartbeat(roomInfo).catch(() => false);
+      await sleep(heartbeatInterval);
     }
+  })();
 
-    detail.gainCheck = evaluateCultivationGain(before, after, {
-      round,
-      maxRounds: 2,
-      waitMs: 12000,
-      previousEnergy
-    });
-    detail.verified = detail.gainCheck.verified;
-    detail.reason = detail.gainCheck.reason;
+  const after = await getPetEnergy(roomId).catch(() => null);
+  detail.energyAfter = after;
 
-    const totalDeltaText = Number.isFinite(detail.gainCheck.delta) ? `累计 +${detail.gainCheck.delta}` : '累计增量未知';
-    const windowDeltaText = Number.isFinite(detail.gainCheck.windowDelta) ? `本轮 +${detail.gainCheck.windowDelta}` : '本轮增量未知';
-    log(`弹幕「修炼」第 ${round} 次校验: ${detail.verified ? '✅ 已确认生效' : '⚠️ 未确认生效'} - ${totalDeltaText} / ${windowDeltaText} - ${detail.reason}`);
+  // 等待心跳完成
+  await heartbeatPromise;
 
-    if (detail.verified || !detail.gainCheck.needsAnotherCheck) {
-      break;
-    }
-    if (after) {
-      previousEnergy = after;
-    }
+  if (after) {
+    log(`修炼复查经验: ${after.current}/${after.total}（Lv.${after.level} ${after.levelName}）`);
   }
+
+  detail.gainCheck = evaluateCultivationGain(before, after, {
+    round: 1,
+    maxRounds: 1,
+    waitMs: 12000
+  });
+  detail.verified = detail.gainCheck.verified;
+  detail.reason = detail.gainCheck.reason;
+
+  const totalDeltaText = Number.isFinite(detail.gainCheck.delta) ? `累计 +${detail.gainCheck.delta}` : '累计增量未知';
+  log(`弹幕「修炼」校验: ${detail.verified ? '✅ 已确认生效' : '⚠️ 未确认生效'} - ${totalDeltaText} - ${detail.reason}`);
 
   return detail;
 }
@@ -1212,4 +1233,5 @@ main().catch(e => {
   err(`主程序异常: ${e.message}`);
   process.exit(1);
 });
+
 
