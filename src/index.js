@@ -25,6 +25,11 @@ const DANMU_GAP_MS  = Math.max(2000, parseInt(process.env.DANMU_GAP_MS || '3000'
 const MAIL_USER     = process.env.QQ_MAIL_USER || '';
 const MAIL_PASS     = process.env.QQ_MAIL_PASS || '';
 
+// 边界AI签到配置
+const YYAI_TOKEN        = process.env.YYAI_TOKEN || '';
+const YYAI_ACCESS_TOKEN = process.env.YYAI_ACCESS_TOKEN || '';
+const YYAI_UID          = process.env.YYAI_UID || '';
+
 
 const CSRF     = extractCsrf(COOKIE);
 const AUTO_UID = extractUid(COOKIE);
@@ -915,6 +920,77 @@ async function runOneCycle(roomId, roomInfo, cycleIndex) {
 
 
 // ==============================
+// 边界AI签到（yyai8.com）
+// ==============================
+async function doYyaiSignin() {
+  if (!YYAI_TOKEN || !YYAI_ACCESS_TOKEN || !YYAI_UID) {
+    log('边界AI签到: 未配置 YYAI_TOKEN / YYAI_ACCESS_TOKEN / YYAI_UID，跳过');
+    return;
+  }
+
+  log('=== 边界AI每日签到 ===');
+  const body = '{}';
+  try {
+    const res = await request({
+      hostname: 'api.ai1foo.com',
+      path: '/api/v2/user/signin/do',
+      method: 'POST',
+      headers: {
+        'accept': 'application/json, text/plain, */*',
+        'accept-language': 'zh-CN,zh;q=0.9',
+        'access-token': YYAI_ACCESS_TOKEN,
+        'app-name': 'bianjie',
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(body),
+        'origin': 'https://yyai8.com',
+        'referer': 'https://yyai8.com/',
+        'token': YYAI_TOKEN,
+        'uid': YYAI_UID,
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36 Edg/146.0.0.0',
+      }
+    }, body);
+
+    const msg = String(res.msg || res.message || '');
+    const isAlready =
+      msg.includes('已签到') || msg.includes('已经签到') ||
+      msg.toLowerCase().includes('already') || msg.includes('重复');
+    const isSuccess =
+      res.code === 0 || res.code === 1 || res.code === 200 ||
+      res.success === true ||
+      (msg && (msg.includes('成功') || msg.toLowerCase().includes('success')));
+
+    if (isAlready) {
+      log('边界AI签到: 今日已签到，跳过');
+    } else if (isSuccess) {
+      const points = res.data?.points || res.data?.score || res.data?.coin ||
+                     res.data?.integral || res.data?.exp || '';
+      ok(`边界AI签到: 签到成功！${points ? '获得积分: ' + points : ''}`);
+    } else {
+      const failMsg = msg || JSON.stringify(res);
+      warn(`边界AI签到: 失败 code=${res.code}, msg=${failMsg}`);
+
+      const isTokenExpired =
+        res.code === 401 ||
+        (failMsg.includes('token') || failMsg.includes('未登录') ||
+         failMsg.includes('登录') || failMsg.toLowerCase().includes('unauthorized') ||
+         failMsg.toLowerCase().includes('invalid') || failMsg.toLowerCase().includes('expire'));
+
+      const mailSubject = isTokenExpired
+        ? '【边界AI签到】⚠️ access-token 已失效，请及时更新'
+        : '【边界AI签到】⚠️ 今日签到失败';
+      const mailBody = isTokenExpired
+        ? `边界AI平台自动签到失败，原因：access-token 已过期。\n\n请按以下步骤更新：\n1. 打开浏览器，登录 https://yyai8.com/signIn\n2. F12 → Network → 点击"立即签到"\n3. 找到 POST do 请求 → Request Headers\n4. 复制 access-token 的值\n5. 前往 GitHub 仓库 → Settings → Secrets → 更新 YYAI_ACCESS_TOKEN\n\n错误信息：${failMsg}\n时间：${now()}`
+        : `边界AI平台签到失败。\n\n错误信息：code=${res.code}, msg=${failMsg}\n时间：${now()}`;
+      await sendMail(mailSubject, mailBody).catch(() => {});
+    }
+  } catch (e) {
+    warn(`边界AI签到: 异常 ${e.message}`);
+    await sendMail('【边界AI签到】❌ 签到脚本异常',
+      `边界AI平台签到脚本发生异常：${e.message}\n时间：${now()}`).catch(() => {});
+  }
+}
+
+// ==============================
 // 主循环
 // ==============================
 async function main() {
@@ -926,6 +1002,9 @@ async function main() {
   if (!loggedIn) {
     process.exit(1);
   }
+
+  // 边界AI签到（每次挂机启动时执行一次，幂等，重复签到会直接跳过）
+  await doYyaiSignin().catch(e => warn(`边界AI签到异常（不影响挂机）: ${e.message}`));
 
   const startTime  = Date.now();
   const maxRunMs   = MAX_RUNTIME_MINUTES * 60 * 1000;
