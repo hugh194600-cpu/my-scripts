@@ -753,34 +753,45 @@ async function doPanelSignin(roomId, energy) {
 }
 
 
-// 【增强】单次修炼：发送弹幕 + 等待复查 + 返回结果
-// 修复 +14 问题：修炼期间增加心跳频率保持在线状态，修炼后立即读取面板
+// 【增强】连续修炼多次后再复查 - 修复 +14 问题需要连续触发才能激活加成
 async function doSingleCultivation(roomId, roomInfo, beforeEnergy) {
-  const sent = await sendDanmu(roomId, '修炼').catch(() => false);
-  if (!sent) {
-    return { accepted: false, verified: false, energyAfter: null, reason: '发送弹幕「修炼」失败' };
+  // 【关键修复】连续修炼 3 次，每次间隔 3 秒，确保触发修炼加成
+  const CULTIVATE_COUNT = 3;
+  const CULTIVATE_GAP_MS = 3000;
+  
+  log(`开始连续修炼 ${CULTIVATE_COUNT} 次...`);
+  
+  for (let i = 1; i <= CULTIVATE_COUNT; i++) {
+    const sent = await sendDanmu(roomId, '修炼').catch(() => false);
+    if (!sent) {
+      warn(`第 ${i} 次修炼发送失败`);
+      return { accepted: false, verified: false, energyAfter: null, reason: `第 ${i} 次修炼发送失败` };
+    }
+    log(`第 ${i}/${CULTIVATE_COUNT} 次修炼已发送`);
+    
+    // 修炼期间保持心跳
+    const heartbeatStart = Date.now();
+    const heartbeatPromise = (async () => {
+      while (Date.now() - heartbeatStart < 8000) {
+        await sendHeartbeat(roomInfo).catch(() => false);
+        await sleep(5000);
+      }
+    })();
+    
+    // 等待一会儿再发下一次修炼
+    if (i < CULTIVATE_COUNT) {
+      await sleep(CULTIVATE_GAP_MS);
+    }
+    
+    await heartbeatPromise;
   }
 
-  // 【修复】修炼期间保持高频心跳（每 5 秒一次，持续 10 秒），确保在线状态
-  const heartbeatInterval = 5000;
-  const heartbeatDuration = 10000;
-  const heartbeatStart = Date.now();
-  
-  const heartbeatPromise = (async () => {
-    while (Date.now() - heartbeatStart < heartbeatDuration) {
-      await sendHeartbeat(roomInfo).catch(() => false);
-      await sleep(heartbeatInterval);
-    }
-  })();
-
-  // 等待面板刷新（给 B站 时间处理修炼加成）
+  // 修炼完成后等待面板刷新
   const waitMs = CULTIVATION_WAIT_SECONDS * 1000;
+  log(`连续修炼完成，等待 ${waitMs/1000} 秒后读取面板...`);
   await sleep(waitMs);
 
-  // 等待心跳完成
-  await heartbeatPromise;
-
-  // 【修复】修炼后立即读取面板（减少在线基础收益的混入）
+  // 读取面板
   const after = await getPetEnergy(roomId).catch(() => null);
   const gainCheck = evaluateCultivationGain(beforeEnergy, after, {
     round: 1, maxRounds: 1, waitMs
@@ -834,7 +845,7 @@ async function cultivateUntilFull(roomId, roomInfo, startEnergy) {
   return current;
 }
 
-// 【增强】doCultivation 也增加修炼期间高频心跳，确保修炼加成触发
+// 【增强】doCultivation 也改用连续修炼逻辑，确保修炼加成触发
 async function doCultivation(roomId, roomInfo, energy) {
   const before = energy || await getPetEnergy(roomId).catch(() => null);
   const detail = {
@@ -855,48 +866,51 @@ async function doCultivation(roomId, roomInfo, energy) {
     warn('当前未读到宠物面板基线经验，先直接发送弹幕「修炼」，本轮无法做真实生效校验');
   }
 
-  detail.accepted = await sendDanmu(roomId, '修炼').catch(() => false);
-  detail.reason = detail.accepted ? '直播弹幕「修炼」已发出' : '发送直播弹幕「修炼」失败';
-
-  if (!detail.accepted) {
-    return detail;
+  // 【关键修复】连续修炼 3 次，每次间隔 3 秒
+  const CULTIVATE_COUNT = 3;
+  const CULTIVATE_GAP_MS = 3000;
+  
+  for (let i = 1; i <= CULTIVATE_COUNT; i++) {
+    const sent = await sendDanmu(roomId, '修炼').catch(() => false);
+    if (!sent) {
+      detail.reason = `第 ${i} 次修炼发送失败`;
+      return detail;
+    }
+    log(`第 ${i}/${CULTIVATE_COUNT} 次修炼已发出`);
+    
+    // 修炼期间保持心跳
+    const heartbeatStart = Date.now();
+    (async () => {
+      while (Date.now() - heartbeatStart < 8000) {
+        await sendHeartbeat(roomInfo).catch(() => false);
+        await sleep(5000);
+      }
+    })();
+    
+    if (i < CULTIVATE_COUNT) {
+      await sleep(CULTIVATE_GAP_MS);
+    }
   }
+
+  detail.accepted = true;
+  detail.reason = '连续修炼已完成';
 
   if (!before) {
     return detail;
   }
 
-  log('弹幕「修炼」已发出，进入经验复查（高频心跳保活）...');
+  log('连续修炼完成，进入经验复查...');
 
-  // 【修复】修炼后立即读取面板，减少基础收益混入
-  await sleep(12000);
-
-  // 【修复】修炼复查期间增加心跳频率
-  const heartbeatInterval = 5000;
-  const heartbeatDuration = 12000;
-  const heartbeatStart = Date.now();
-  
-  const heartbeatPromise = (async () => {
-    while (Date.now() - heartbeatStart < heartbeatDuration) {
-      await sendHeartbeat(roomInfo).catch(() => false);
-      await sleep(heartbeatInterval);
-    }
-  })();
+  // 等待面板刷新
+  await sleep(15000);
 
   const after = await getPetEnergy(roomId).catch(() => null);
   detail.energyAfter = after;
 
-  // 等待心跳完成
-  await heartbeatPromise;
-
-  if (after) {
-    log(`修炼复查经验: ${after.current}/${after.total}（Lv.${after.level} ${after.levelName}）`);
-  }
-
   detail.gainCheck = evaluateCultivationGain(before, after, {
     round: 1,
     maxRounds: 1,
-    waitMs: 12000
+    waitMs: 15000
   });
   detail.verified = detail.gainCheck.verified;
   detail.reason = detail.gainCheck.reason;
