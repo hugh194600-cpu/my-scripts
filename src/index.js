@@ -15,6 +15,11 @@ const CYCLE_MINUTES = 10;
 const MAIL_USER = process.env.QQ_MAIL_USER || '';
 const MAIL_PASS = process.env.QQ_MAIL_PASS || '';
 
+// 边界AI签到配置
+const YYAI_TOKEN = process.env.YYAI_TOKEN || '';
+const YYAI_ACCESS_TOKEN = process.env.YYAI_ACCESS_TOKEN || '';
+const YYAI_UID = process.env.YYAI_UID || '';
+
 const CSRF = (COOKIE.match(/bili_jct=([^;]+)/) || [])[1] || '';
 
 // ==============================
@@ -134,6 +139,46 @@ async function heartbeat(roomId) {
 }
 
 // ==============================
+// 边界AI签到
+// ==============================
+async function doYyaiSignin() {
+  if (!YYAI_TOKEN || !YYAI_ACCESS_TOKEN || !YYAI_UID) {
+    log('边界AI签到: 未配置，跳过');
+    return;
+  }
+  log('=== 边界AI每日签到 ===');
+  const body = '{}';
+  try {
+    const res = await request({
+      hostname: 'api.ai1foo.com',
+      path: '/api/v2/user/signin/do',
+      method: 'POST',
+      headers: {
+        'access-token': YYAI_ACCESS_TOKEN,
+        'app-name': 'bianjie',
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(body),
+        'origin': 'https://yyai8.com',
+        'referer': 'https://yyai8.com/',
+        'token': YYAI_TOKEN,
+        'uid': YYAI_UID,
+        'user-agent': 'Mozilla/5.0'
+      }
+    }, body);
+    const msg = res.msg || res.message || '';
+    if (msg.includes('已签到') || msg.includes('already')) {
+      log('边界AI签到: 今日已签到');
+    } else if (res.code === 0 || res.success) {
+      log(`边界AI签到: ✅ 成功`);
+    } else {
+      warn(`边界AI签到: ⚠️ 失败 - ${msg}`);
+    }
+  } catch (e) {
+    warn(`边界AI签到: ❌ 异常 - ${e.message}`);
+  }
+}
+
+// ==============================
 // 主逻辑
 // ==============================
 async function runOneCycle(roomId, cycleIndex) {
@@ -170,6 +215,9 @@ async function main() {
   log('=== B站弹幕宠物挂机启动 ===');
   
   if (!await checkLogin()) process.exit(1);
+  
+  // 边界AI签到
+  await doYyaiSignin();
   
   let roomId = HANGUP_ROOM_ID || await findLiveRoom();
   log(`使用直播间: ${roomId}`);
