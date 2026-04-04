@@ -8,13 +8,13 @@ on:
   workflow_dispatch:
     inputs:
       cycle_minutes:
-        description: '每轮间隔（分钟），默认 10'
+        description: '每轮间隔（分钟），默认 5'
         required: false
-        default: '10'
+        default: '5'
       max_runtime_minutes:
-        description: '最大运行时长（分钟），默认 25'
+        description: '最大运行时长（分钟），默认 60'
         required: false
-        default: '25'
+        default: '60'
 
 
 jobs:
@@ -46,6 +46,7 @@ jobs:
           YYAI_TOKEN: ${{ secrets.YYAI_TOKEN }}
           YYAI_ACCESS_TOKEN: ${{ secrets.YYAI_ACCESS_TOKEN }}
           YYAI_UID: ${{ secrets.YYAI_UID }}
-          CYCLE_MINUTES: ${{ github.event.inputs.cycle_minutes || '10' }}
-          MAX_RUNTIME_MINUTES: ${{ github.event.inputs.max_runtime_minutes || '25' }}
+          CYCLE_MINUTES: ${{ github.event.inputs.cycle_minutes || '5' }}
+          MAX_RUNTIME_MINUTES: ${{ github.event.inputs.max_runtime_minutes || '60' }}
         run: node src/index.js
+
