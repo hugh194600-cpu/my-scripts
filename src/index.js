@@ -1,4 +1,4 @@
-/**
+﻿/**
  * B站弹幕宠物挂机 - 精简版
  * 逻辑：进入直播间 → 每10分钟循环（弹幕签到 → 弹幕修炼 → 突破检测）
  *       经验与升级结果仍通过蛋宠面板复查，直播间关播后自动换房继续
@@ -24,6 +24,11 @@ const DANMU_GAP_MS  = Math.max(2000, parseInt(process.env.DANMU_GAP_MS || '3000'
 
 const MAIL_USER     = process.env.QQ_MAIL_USER || '';
 const MAIL_PASS     = process.env.QQ_MAIL_PASS || '';
+
+// 【新增】突破前最多连续修炼次数（防止低等级永远等不满）
+const BREAKTHROUGH_MAX_CULTIVATIONS = Math.max(3, parseInt(process.env.BREAKTHROUGH_MAX_CULTIVATIONS || '8', 10));
+// 【新增】每次修炼后等待秒数（给面板刷新时间）
+const CULTIVATION_WAIT_SECONDS = Math.max(10, parseInt(process.env.CULTIVATION_WAIT_SECONDS || '14', 10));
 
 // 边界AI签到配置
 const YYAI_TOKEN        = process.env.YYAI_TOKEN || '';
@@ -151,7 +156,7 @@ async function notifyCookieInvalid(reason) {
 
 function request(opts, postData = null) {
   return new Promise((resolve, reject) => {
-    const lib = opts.hostname && opts.hostname.endsWith('.bilibili.com') ? https : https;
+    const lib = opts.hostname && opts.hostname.includes('bilibili') ? https : http;
     const req = lib.request(opts, (res) => {
       let data = '';
       res.on('data', chunk => { data += chunk; });
@@ -556,19 +561,44 @@ function resolvePanelCommandInputId(panelHtml, action) {
 // 获取 panel_url
 
 
+// 【增强】获取 panel_url，支持多套正则备用，防止 B站页面改版导致 game_id 提取失败
 async function getPanelUrl(roomId) {
+  let html;
+  try {
+    html = await fetchHtml(`https://live.bilibili.com/${roomId}`, `https://live.bilibili.com/${roomId}`);
+  } catch(_) { return null; }
+  if (!html) return null;
 
-  // 从直播间页面提取 game_id
-  const html = await fetchHtml(`https://live.bilibili.com/${roomId}`, `https://live.bilibili.com/${roomId}`);
-  const tagMatch = html.match(/"interactive_game_tag":\{"action":\d+,"game_id":"([^"]+)","game_name":"([^"]+)"/);
-  let gameId = tagMatch ? tagMatch[1] : '';
-  const gameName = tagMatch ? tagMatch[2] : '';
+  const norm = html.replace(/\s+/g, '');
+  let gameId = '';
+  let gameName = '';
 
-  if (!gameId || !gameName.includes('弹幕宠物')) {
-    const m = html.match(/"game_id"\s*:\s*"?(\d+)"?/);
-    if (!m) return null;
-    gameId = m[1];
+  // 方案1：interactive_game_tag（最新格式）
+  {
+    const m = norm.match(/"interactive_game_tag"\s*:\s*\{[^}]*?"game_id"\s*:\s*"?([^",}]+)"?[^}]*?"game_name"\s*:\s*"?([^",}]+)"?/);
+    if (m) { gameId = m[1].replace(/"/g, ''); gameName = m[2].replace(/"/g, ''); }
   }
+
+  // 方案2：从 norm 匹配带引号的 game_id
+  if (!gameId) {
+    const m = norm.match(/"game_id"\s*:\s*"?(\d+)"?/);
+    if (m) gameId = m[1];
+  }
+
+  // 方案3：从原始 html 匹配（兼容性更好）
+  if (!gameId) {
+    const m = html.match(/"game_id"\s*[=:]\s*"?(\d+)"?/);
+    if (m) gameId = m[1];
+  }
+
+  // 方案4：弹幕宠物的其他特征
+  if (!gameId || !gameName.includes('弹幕宠物')) {
+    const m = html.match(/弹幕宠物.*?"game_id"\s*[=:]\s*"?(\d+)"?/i) ||
+              html.match(/interactive_game_tag.*?"game_id"\s*[=:]\s*"?(\d+)"?/i);
+    if (m) gameId = m[1];
+  }
+
+  if (!gameId) return null;
 
   // 拿 panel_url
   const res = await request({
@@ -600,7 +630,15 @@ async function getPetEnergy(roomId) {
   const total    = parseInt(full[1].trim(), 10);
   const isFull   = Number.isFinite(current) && Number.isFinite(total) && current >= total;
   const normalizedHtml = panelHtml.replace(/\s+/g, '');
-  const promptReady = /当前可突破[，,]?请发送突破指令/.test(normalizedHtml);
+  // 【增强】突破就绪判断：支持更多种面板文字提示，防止 B站改版文字变化导致漏判
+  const breakthroughKeywords = [
+    '当前可突破', '可以突破', '请发送突破', '发送突破',
+    'tupo', 'breakthrough', '突破指令',
+    '能量已满', '已满', '待突破'
+  ];
+  const promptReady = breakthroughKeywords.some(kw =>
+    normalizedHtml.toLowerCase().includes(kw.toLowerCase())
+  );
 
   return {
     current,
@@ -714,6 +752,70 @@ async function doPanelSignin(roomId, energy) {
   };
 }
 
+
+// 【新增】单次修炼：发送弹幕 + 等待复查 + 返回结果
+async function doSingleCultivation(roomId, roomInfo, beforeEnergy) {
+  const sent = await sendDanmu(roomId, '修炼').catch(() => false);
+  if (!sent) {
+    return { accepted: false, verified: false, energyAfter: null, reason: '发送弹幕「修炼」失败' };
+  }
+
+  const waitMs = CULTIVATION_WAIT_SECONDS * 1000;
+  await sleep(waitMs);
+  await sendHeartbeat(roomInfo).catch(() => false);
+
+  const after = await getPetEnergy(roomId).catch(() => null);
+  const gainCheck = evaluateCultivationGain(beforeEnergy, after, {
+    round: 1, maxRounds: 1, waitMs
+  });
+
+  return {
+    accepted: true,
+    verified: gainCheck.verified,
+    energyAfter: after,
+    gainCheck,
+    reason: gainCheck.reason
+  };
+}
+
+// 【新增】连续修炼直到能量满（或达到最大次数）
+async function cultivateUntilFull(roomId, roomInfo, startEnergy) {
+  let current = startEnergy;
+  let attempt = 0;
+  const maxAttempts = BREAKTHROUGH_MAX_CULTIVATIONS;
+
+  log(`突破前连续修炼（最多 ${maxAttempts} 次），起始能量: ${current ? `${current.current}/${current.total}` : '面板不可读'}`);
+
+  while (attempt < maxAttempts) {
+    attempt++;
+
+    if (current && current.isFull) {
+      log(`连续修炼第 ${attempt} 次后能量已满（${current.current}/${current.total}），停止修炼`);
+      break;
+    }
+
+    log(`连续修炼第 ${attempt}/${maxAttempts} 次...`);
+    const result = await doSingleCultivation(roomId, roomInfo, current);
+
+    const deltaStr = (result.energyAfter && current)
+      ? ` (+${result.energyAfter.current - (current.current || 0)})`
+      : '';
+
+    log(`  修炼: ${result.accepted ? '✅' : '❌'} ${result.reason}${deltaStr}`);
+
+    if (result.energyAfter) {
+      current = result.energyAfter;
+      log(`  当前能量: ${current.current}/${current.total}（Lv.${current.level} ${current.levelName}）`);
+
+      if (current.isFull) {
+        log(`能量已满，停止修炼`);
+        break;
+      }
+    }
+  }
+
+  return current;
+}
 
 async function doCultivation(roomId, roomInfo, energy) {
   const before = energy || await getPetEnergy(roomId).catch(() => null);
@@ -904,14 +1006,27 @@ async function runOneCycle(roomId, roomInfo, cycleIndex) {
 
   if (energyAfterCultivation) {
     log(`宠物经验: ${energyAfterCultivation.current}/${energyAfterCultivation.total}（Lv.${energyAfterCultivation.level} ${energyAfterCultivation.levelName}）`);
-    if (isBreakthroughReady(energyAfterCultivation)) {
-
+    if (energyAfterCultivation && isBreakthroughReady(energyAfterCultivation)) {
+      // 【核心修复】突破前先连续修炼刷满能量
       await sleep(DANMU_GAP_MS);
-      await doBreakthrough(roomId, energyAfterCultivation);
+      const beforeBreakthrough = await cultivateUntilFull(roomId, roomInfo, energyAfterCultivation);
+      if (beforeBreakthrough) {
+        log(`突破前最终能量: ${beforeBreakthrough.current}/${beforeBreakthrough.total}（Lv.${beforeBreakthrough.level} ${beforeBreakthrough.levelName}）`);
+      }
+      await sleep(DANMU_GAP_MS);
+      await doBreakthrough(roomId, beforeBreakthrough || energyAfterCultivation);
     }
   } else {
-    warn('修炼后读取宠物经验失败，无法继续判断是否需要突破');
-
+    // 【增强】即使面板读取失败，也尝试累积修炼次数后突破
+    warn('修炼后读取宠物经验失败，尝试连续修炼后突破');
+    const startEnergy = await getPetEnergy(roomId).catch(() => null);
+    const cultivated = await cultivateUntilFull(roomId, roomInfo, startEnergy);
+    if (cultivated && cultivated.isFull) {
+      log('能量已满，尝试突破');
+      await doBreakthrough(roomId, cultivated);
+    } else if (cultivated) {
+      log(`连续修炼后能量: ${cultivated.current}/${cultivated.total}，未达满值，等待下一轮继续`);
+    }
   }
 
   log('本轮完成');
@@ -1097,3 +1212,4 @@ main().catch(e => {
   err(`主程序异常: ${e.message}`);
   process.exit(1);
 });
+
