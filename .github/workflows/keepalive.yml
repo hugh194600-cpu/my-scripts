@@ -1,0 +1,21 @@
+name: Keep Alive
+
+on:
+  schedule:
+    - cron: '0 12 * * 1'  # 每周一 UTC 12:00（北京时间 20:00）
+  workflow_dispatch:
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Keep alive commit
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+          git commit --allow-empty -m "chore: keep alive $(date -u +'%Y-%m-%d')"
+          git push
