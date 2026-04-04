@@ -757,7 +757,7 @@ async function doPanelSignin(roomId, energy) {
 async function doSingleCultivation(roomId, roomInfo, beforeEnergy) {
   // 【关键修复】连续修炼 3 次，每次间隔 3 秒，确保触发修炼加成
   const CULTIVATE_COUNT = 3;
-  const CULTIVATE_GAP_MS = 3000;
+  const CULTIVATE_GAP_MS = 6000;
   
   log(`开始连续修炼 ${CULTIVATE_COUNT} 次...`);
   
@@ -866,9 +866,11 @@ async function doCultivation(roomId, roomInfo, energy) {
     warn('当前未读到宠物面板基线经验，先直接发送弹幕「修炼」，本轮无法做真实生效校验');
   }
 
-  // 【关键修复】连续修炼 3 次，每次间隔 3 秒
+  // 【关键修复】连续修炼 3 次，每次间隔 6 秒（防止 B站 弹幕频率限制）
   const CULTIVATE_COUNT = 3;
-  const CULTIVATE_GAP_MS = 3000;
+  const CULTIVATE_GAP_MS = 6000;
+  
+  log(`开始连续修炼 ${CULTIVATE_COUNT} 次（间隔 ${CULTIVATE_GAP_MS/1000} 秒）...`);
   
   for (let i = 1; i <= CULTIVATE_COUNT; i++) {
     const sent = await sendDanmu(roomId, '修炼').catch(() => false);
