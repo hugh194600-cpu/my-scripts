@@ -208,6 +208,28 @@ async function runOneCycle(roomId, cycleIndex) {
   log(`突破: ${breakthroughOk ? '✅' : '❌'}`);
   
   log('本轮完成');
+  return true;
+}
+
+// 检查直播间是否还在直播，如果关播则自动切换
+async function checkAndSwitchRoom(currentRoomId) {
+  const isLive = await getRoomStatus(currentRoomId);
+  if (isLive) {
+    return currentRoomId; // 还在直播，继续使用
+  }
+  
+  warn(`直播间 ${currentRoomId} 已关播，寻找新直播间...`);
+  const newRoomId = await findLiveRoom();
+  if (newRoomId && newRoomId !== currentRoomId) {
+    log(`切换到新直播间: ${newRoomId}`);
+    await enterRoom(newRoomId);
+    log('已进场新直播间');
+    return newRoomId;
+  }
+  
+  // 如果没找到新直播间，继续使用当前直播间（可能API有问题）
+  warn('未找到其他直播间，继续使用当前直播间');
+  return currentRoomId;
 }
 
 async function findLiveRoom() {
@@ -238,6 +260,9 @@ async function main() {
   let cycle = 1;
   
   while (Date.now() - startTime < maxMs) {
+    // 每轮开始前检查直播间状态，关播则自动切换
+    roomId = await checkAndSwitchRoom(roomId);
+    
     await runOneCycle(roomId, cycle);
     cycle++;
     await sleep(cycleMs);
