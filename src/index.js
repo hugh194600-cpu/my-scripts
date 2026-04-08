@@ -11,7 +11,8 @@ const tls = require('tls');
 // ==============================
 const COOKIE = process.env.BILIBILI_COOKIE || '';
 const HANGUP_ROOM_ID = process.env.HANGUP_ROOM_ID || '';
-const CYCLE_MINUTES = 10;
+const CYCLE_MINUTES = parseInt(process.env.CYCLE_MINUTES || '10', 10);
+const MAX_RUNTIME_MINUTES = parseInt(process.env.MAX_RUNTIME_MINUTES || '30', 10);
 const MAIL_USER = process.env.QQ_MAIL_USER || '';
 const MAIL_PASS = process.env.QQ_MAIL_PASS || '';
 
@@ -36,8 +37,7 @@ const err = msg => console.error(`[${now()}] ❌  ${msg}`);
 // ==============================
 function request(opts, postData = null) {
   return new Promise((resolve, reject) => {
-    const lib = opts.hostname?.includes('bilibili') ? https : https;
-    const req = lib.request(opts, res => {
+    const req = https.request(opts, res => {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
@@ -54,6 +54,13 @@ function request(opts, postData = null) {
 
 function apiGet(path) {
   return request({ hostname: 'api.bilibili.com', path, method: 'GET', headers: { 'Cookie': COOKIE, 'User-Agent': 'Mozilla/5.0' } });
+}
+
+function liveGet(path) {
+  return request({
+    hostname: 'api.live.bilibili.com', path, method: 'GET',
+    headers: { 'Cookie': COOKIE, 'Referer': 'https://live.bilibili.com/', 'User-Agent': 'Mozilla/5.0' }
+  });
 }
 
 function livePost(path, body, roomId) {
@@ -118,7 +125,7 @@ async function checkLogin() {
 }
 
 async function getRoomStatus(roomId) {
-  const res = await livePost('/xlive/web-room/v1/index/getInfoByRoom', `room_id=${roomId}`);
+  const res = await liveGet(`/xlive/web-room/v1/index/getInfoByRoom?room_id=${roomId}`);
   return res.code === 0 ? res.data?.room_info?.live_status === 1 : false;
 }
 
@@ -225,7 +232,7 @@ async function main() {
   await enterRoom(roomId);
   log('已进场');
   
-  const maxMs = 60 * 60 * 1000; // 1小时
+  const maxMs = MAX_RUNTIME_MINUTES * 60 * 1000;
   const cycleMs = CYCLE_MINUTES * 60 * 1000;
   const startTime = Date.now();
   let cycle = 1;
