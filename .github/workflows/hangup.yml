@@ -1,4 +1,4 @@
-name: B站弹幕宠物挂机
+﻿name: B站弹幕宠物挂机
 
 on:
   schedule:
@@ -14,7 +14,7 @@ on:
       max_runtime_minutes:
         description: '最大运行时长（分钟），默认 60'
         required: false
-        default: '60'
+        default: '5'
 
 
 jobs:
@@ -49,4 +49,5 @@ jobs:
           CYCLE_MINUTES: ${{ github.event.inputs.cycle_minutes || '5' }}
           MAX_RUNTIME_MINUTES: ${{ github.event.inputs.max_runtime_minutes || '60' }}
         run: node src/index.js
+
 
