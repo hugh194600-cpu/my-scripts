@@ -22,6 +22,7 @@ const YYAI_ACCESS_TOKEN = process.env.YYAI_ACCESS_TOKEN || '';
 const YYAI_UID = process.env.YYAI_UID || '';
 
 const CSRF = (COOKIE.match(/bili_jct=([^;]+)/) || [])[1] || '';
+const CSRF_TOKEN = CSRF; // csrf_token 和 csrf 值相同
 
 // ==============================
 // 工具函数
@@ -41,7 +42,7 @@ function request(opts, postData = null) {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
-        try { resolve(JSON.parse(data)); } 
+        try { resolve(JSON.parse(data)); }
         catch { resolve({ raw: data, code: -999 }); }
       });
     });
@@ -130,19 +131,22 @@ async function getRoomStatus(roomId) {
 }
 
 async function enterRoom(roomId) {
-  const body = `room_id=${roomId}&csrf=${CSRF}`;
+  const body = `room_id=${roomId}&csrf=${CSRF}&csrf_token=${CSRF_TOKEN}`;
   return (await livePost('/xlive/web-room/v1/index/roomEntryAction', body, roomId)).code === 0;
 }
 
 async function sendDanmu(roomId, msg) {
-  const body = `bubble=0&msg=${encodeURIComponent(msg)}&color=16777215&mode=1&fontsize=50&rnd=${Math.floor(Date.now()/1000)}&roomid=${roomId}&csrf=${CSRF}`;
+  const rnd = Math.floor(Date.now() / 1000);
+  const body = `bubble=0&msg=${encodeURIComponent(msg)}&color=16777215&mode=1&fontsize=50&rnd=${rnd}&roomid=${roomId}&csrf=${CSRF}&csrf_token=${CSRF_TOKEN}`;
   const res = await livePost('/msg/send', body, roomId);
   return res.code === 0;
 }
 
 async function heartbeat(roomId) {
   const body = `visit_id=&room_id=${roomId}`;
-  return (await livePost('/xlive/web-room/v2/index/webHeartBeat', body, roomId)).code === 0;
+  const res = await livePost('/xlive/web-room/v2/index/webHeartBeat', body, roomId);
+  // heartbeat 非关键，失败不报错
+  return res.code === 0;
 }
 
 // ==============================
@@ -190,23 +194,23 @@ async function doYyaiSignin() {
 // ==============================
 async function runOneCycle(roomId, cycleIndex) {
   log(`========== 第 ${cycleIndex} 轮 ==========`);
-  
-  // 心跳保活
+
+  // 心跳保活（非关键，失败继续）
   await heartbeat(roomId);
-  
+
   // 发送签到 → 修炼 → 突破，每个间隔2秒
   await sleep(2000);
   const signinOk = await sendDanmu(roomId, '签到');
   log(`签到: ${signinOk ? '✅' : '❌'}`);
-  
+
   await sleep(2000);
   const cultivateOk = await sendDanmu(roomId, '修炼');
   log(`修炼: ${cultivateOk ? '✅' : '❌'}`);
-  
+
   await sleep(2000);
   const breakthroughOk = await sendDanmu(roomId, '突破');
   log(`突破: ${breakthroughOk ? '✅' : '❌'}`);
-  
+
   log('本轮完成');
   return true;
 }
@@ -217,7 +221,7 @@ async function checkAndSwitchRoom(currentRoomId) {
   if (isLive) {
     return currentRoomId; // 还在直播，继续使用
   }
-  
+
   warn(`直播间 ${currentRoomId} 已关播，寻找新直播间...`);
   const newRoomId = await findLiveRoom();
   if (newRoomId && newRoomId !== currentRoomId) {
@@ -226,8 +230,8 @@ async function checkAndSwitchRoom(currentRoomId) {
     log('已进场新直播间');
     return newRoomId;
   }
-  
-  // 如果没找到新直播间，继续使用当前直播间（可能API有问题）
+
+  // 如果没找到新直播间，继续使用当前直播间
   warn('未找到其他直播间，继续使用当前直播间');
   return currentRoomId;
 }
@@ -242,32 +246,32 @@ async function findLiveRoom() {
 
 async function main() {
   log('=== B站弹幕宠物挂机启动 ===');
-  
+
   if (!await checkLogin()) process.exit(1);
-  
+
   // 边界AI签到
   await doYyaiSignin();
-  
+
   let roomId = HANGUP_ROOM_ID || await findLiveRoom();
   log(`使用直播间: ${roomId}`);
-  
+
   await enterRoom(roomId);
   log('已进场');
-  
+
   const maxMs = MAX_RUNTIME_MINUTES * 60 * 1000;
   const cycleMs = CYCLE_MINUTES * 60 * 1000;
   const startTime = Date.now();
   let cycle = 1;
-  
+
   while (Date.now() - startTime < maxMs) {
     // 每轮开始前检查直播间状态，关播则自动切换
     roomId = await checkAndSwitchRoom(roomId);
-    
+
     await runOneCycle(roomId, cycle);
     cycle++;
     await sleep(cycleMs);
   }
-  
+
   log('=== 挂机结束 ===');
 }
 
