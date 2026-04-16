@@ -14,7 +14,7 @@ on:
       max_runtime_minutes:
         description: '最大运行时长（分钟），默认 60'
         required: false
-        default: '5'
+        default: '60'
 
 
 jobs:
