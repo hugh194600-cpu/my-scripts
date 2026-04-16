@@ -212,28 +212,33 @@ async function runOneCycle(roomId, cycleIndex) {
   log(`突破: ${breakthroughOk ? '✅' : '❌'}`);
 
   log('本轮完成');
-  return true;
+  return signinOk || cultivateOk || breakthroughOk;
 }
 
-// 检查直播间是否还在直播，如果关播则自动切换
+// 检查直播间是否还在直播，如果关播则重试切换（最多等30秒）
 async function checkAndSwitchRoom(currentRoomId) {
   const isLive = await getRoomStatus(currentRoomId);
   if (isLive) {
-    return currentRoomId; // 还在直播，继续使用
+    return { roomId: currentRoomId, available: true };
   }
 
-  warn(`直播间 ${currentRoomId} 已关播，寻找新直播间...`);
-  const newRoomId = await findLiveRoom();
-  if (newRoomId && newRoomId !== currentRoomId) {
-    log(`切换到新直播间: ${newRoomId}`);
-    await enterRoom(newRoomId);
-    log('已进场新直播间');
-    return newRoomId;
+  // 直播间关播，尝试重试切换（等5秒/次，最多3次，给主播恢复直播的时间）
+  warn(`直播间 ${currentRoomId} 已关播，等待重试...`);
+  for (let retry = 1; retry <= 3; retry++) {
+    await sleep(10000); // 等10秒
+    const newRoomId = await findLiveRoom();
+    if (newRoomId) {
+      log(`重试 ${retry}：找到新直播间 ${newRoomId}`);
+      await enterRoom(newRoomId);
+      log('已进场新直播间');
+      return { roomId: newRoomId, available: true };
+    }
+    warn(`重试 ${retry}/3：仍未找到直播中的房间，继续等待...`);
   }
 
-  // 如果没找到新直播间，继续使用当前直播间
-  warn('未找到其他直播间，继续使用当前直播间');
-  return currentRoomId;
+  // 所有重试都失败，标记为不可用，跳过本轮弹幕发送
+  warn('所有重试均失败，本轮弹幕跳过');
+  return { roomId: currentRoomId, available: false };
 }
 
 async function findLiveRoom() {
@@ -241,7 +246,7 @@ async function findLiveRoom() {
   for (const id of rooms) {
     if (await getRoomStatus(id)) return id;
   }
-  return rooms[0];
+  return null; // 没找到任何直播中的房间
 }
 
 async function main() {
@@ -264,10 +269,16 @@ async function main() {
   let cycle = 1;
 
   while (Date.now() - startTime < maxMs) {
-    // 每轮开始前检查直播间状态，关播则自动切换
-    roomId = await checkAndSwitchRoom(roomId);
+    // 每轮开始前检查直播间状态，关播则自动切换（重试最多30秒）
+    const { roomId: targetRoom, available } = await checkAndSwitchRoom(roomId);
+    roomId = targetRoom;
 
-    await runOneCycle(roomId, cycle);
+    if (available) {
+      await runOneCycle(roomId, cycle);
+    } else {
+      warn('直播间不可用，本轮跳过');
+    }
+
     cycle++;
     await sleep(cycleMs);
   }
