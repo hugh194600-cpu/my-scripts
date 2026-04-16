@@ -1,6 +1,7 @@
 /**
  * B站弹幕宠物挂机 - 精简版
  * 每10分钟执行：签到 → 修炼 → 突破（每个弹幕间隔2秒）
+ * v3: 对齐开源项目 Koziu-233/Bili-danmu-pet-auto 的请求参数
  */
 
 const https = require('https');
@@ -54,20 +55,32 @@ function request(opts, postData = null) {
 }
 
 function apiGet(path) {
-  return request({ hostname: 'api.bilibili.com', path, method: 'GET', headers: { 'Cookie': COOKIE, 'User-Agent': 'Mozilla/5.0' } });
+  return request({ hostname: 'api.bilibili.com', path, method: 'GET', headers: { 'Cookie': COOKIE, 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36' } });
 }
 
 function liveGet(path) {
   return request({
     hostname: 'api.live.bilibili.com', path, method: 'GET',
-    headers: { 'Cookie': COOKIE, 'Referer': 'https://live.bilibili.com/', 'User-Agent': 'Mozilla/5.0' }
+    headers: {
+      'Cookie': COOKIE,
+      'Referer': 'https://live.bilibili.com/',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+    }
   });
 }
 
+// v3: 添加 Origin + Priority，对齐开源项目参数
 function livePost(path, body, roomId) {
   return request({
     hostname: 'api.live.bilibili.com', path, method: 'POST',
-    headers: { 'Cookie': COOKIE, 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': `https://live.bilibili.com/${roomId}`, 'User-Agent': 'Mozilla/5.0' }
+    headers: {
+      'Cookie': COOKIE,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Origin': 'https://live.bilibili.com',
+      'Priority': 'u=1, i',
+      'Referer': `https://live.bilibili.com/${roomId}`,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+    }
   }, body);
 }
 
@@ -135,17 +148,40 @@ async function enterRoom(roomId) {
   return (await livePost('/xlive/web-room/v1/index/roomEntryAction', body, roomId)).code === 0;
 }
 
+// v3: 对齐开源项目 Koziu-233/Bili-danmu-pet-auto 的完整参数
+// 关键新增：jumpfrom=84001 (手机端标识), roomtype, reply_mid, reply_attr, replay_dmid, fontsize=25
 async function sendDanmu(roomId, msg) {
   const rnd = Math.floor(Date.now() / 1000);
-  const body = `bubble=0&msg=${encodeURIComponent(msg)}&color=16777215&mode=1&fontsize=50&rnd=${rnd}&roomid=${roomId}&csrf=${CSRF}&csrf_token=${CSRF_TOKEN}`;
+  // 对齐开源项目参数
+  const bodyParams = new URLSearchParams({
+    bubble: '0',
+    msg: msg,
+    color: '16777215',
+    mode: '1',
+    roomtype: '0',
+    jumpfrom: '84001',    // 关键！手机端/App端标识
+    reply_mid: '0',
+    reply_attr: '0',
+    replay_dmid: '',
+    fontsize: '25',
+    rnd: rnd.toString(),
+    roomid: roomId,
+    csrf: CSRF,
+    csrf_token: CSRF_TOKEN
+  });
+  const body = bodyParams.toString();
   const res = await livePost('/msg/send', body, roomId);
+
+  // 调试：打印完整响应
+  if (res.code !== 0) {
+    log(`弹幕 "${msg}" 失败，响应: ${JSON.stringify(res)}`);
+  }
   return res.code === 0;
 }
 
 async function heartbeat(roomId) {
   const body = `visit_id=&room_id=${roomId}`;
   const res = await livePost('/xlive/web-room/v2/index/webHeartBeat', body, roomId);
-  // heartbeat 非关键，失败不报错
   return res.code === 0;
 }
 
@@ -173,7 +209,7 @@ async function doYyaiSignin() {
         'referer': 'https://yyai8.com/',
         'token': YYAI_TOKEN,
         'uid': YYAI_UID,
-        'user-agent': 'Mozilla/5.0'
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
       }
     }, body);
     const msg = res.msg || res.message || '';
@@ -195,10 +231,8 @@ async function doYyaiSignin() {
 async function runOneCycle(roomId, cycleIndex) {
   log(`========== 第 ${cycleIndex} 轮 ==========`);
 
-  // 心跳保活（非关键，失败继续）
   await heartbeat(roomId);
 
-  // 发送签到 → 修炼 → 突破，每个间隔2秒
   await sleep(2000);
   const signinOk = await sendDanmu(roomId, '签到');
   log(`签到: ${signinOk ? '✅' : '❌'}`);
@@ -222,7 +256,6 @@ async function checkAndSwitchRoom(currentRoomId) {
     return { roomId: currentRoomId, available: true };
   }
 
-  // 直播间关播，尝试重试切换（等5秒/次，最多3次，给主播恢复直播的时间）
   warn(`直播间 ${currentRoomId} 已关播，等待重试...`);
   for (let retry = 1; retry <= 3; retry++) {
     await sleep(10000); // 等10秒
@@ -236,7 +269,6 @@ async function checkAndSwitchRoom(currentRoomId) {
     warn(`重试 ${retry}/3：仍未找到直播中的房间，继续等待...`);
   }
 
-  // 所有重试都失败，标记为不可用，跳过本轮弹幕发送
   warn('所有重试均失败，本轮弹幕跳过');
   return { roomId: currentRoomId, available: false };
 }
@@ -246,7 +278,7 @@ async function findLiveRoom() {
   for (const id of rooms) {
     if (await getRoomStatus(id)) return id;
   }
-  return null; // 没找到任何直播中的房间
+  return null;
 }
 
 async function main() {
@@ -254,7 +286,6 @@ async function main() {
 
   if (!await checkLogin()) process.exit(1);
 
-  // 边界AI签到
   await doYyaiSignin();
 
   let roomId = HANGUP_ROOM_ID || await findLiveRoom();
@@ -269,7 +300,6 @@ async function main() {
   let cycle = 1;
 
   while (Date.now() - startTime < maxMs) {
-    // 每轮开始前检查直播间状态，关播则自动切换（重试最多30秒）
     const { roomId: targetRoom, available } = await checkAndSwitchRoom(roomId);
     roomId = targetRoom;
 
