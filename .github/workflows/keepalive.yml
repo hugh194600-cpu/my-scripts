@@ -5,6 +5,9 @@ on:
     - cron: '0 12 * * 1'  # 每周一 UTC 12:00（北京时间 20:00）
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   keepalive:
     runs-on: ubuntu-latest
