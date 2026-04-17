@@ -691,8 +691,6 @@ async function main() {
           }
         }
       }
-        }
-      }
     }
   }
 
