@@ -489,12 +489,35 @@ async function runOneCycle(roomId, cycleIndex) {
     await sleep(2000);
   }
 
-  // 修炼
-  const cultivateOk = await sendDanmu(roomId, '修炼');
-  log(`[房间 ${roomId}] 修炼: ${cultivateOk ? '✅' : '❌'}`);
-  await sleep(2000);
+  // 修炼：先读当前经验，再发弹幕，等 12 秒后复查经验增量
+  let cultivateOk = false;
+  let energyBefore = await getPetEnergy(roomId).catch(() => null);
+  if (energyBefore) {
+    log(`[房间 ${roomId}] 修炼前经验: ${energyBefore.current}/${energyBefore.total}（Lv.${energyBefore.level} ${energyBefore.levelName}）`);
+  }
 
-  // 突破：读取面板经验，满经验才发
+  cultivateOk = await sendDanmu(roomId, '修炼');
+  log(`[房间 ${roomId}] 修炼弹幕: ${cultivateOk ? '✅' : '❌'}`);
+
+  if (cultivateOk) {
+    log(`[房间 ${roomId}] 等待 12 秒后校验经验增量...`);
+    await sleep(12000);
+    const energyAfter = await getPetEnergy(roomId).catch(() => null);
+    if (energyAfter && energyBefore) {
+      const delta = energyAfter.current - energyBefore.current;
+      if (delta > 0) {
+        log(`[房间 ${roomId}] ✅ 修炼成功！经验 ${energyBefore.current} → ${energyAfter.current}（增量 +${delta}）`);
+      } else {
+        warn(`[房间 ${roomId}] 修炼后经验无增长（增量 ${delta}），可能处于冷却期`);
+      }
+    } else if (energyAfter) {
+      log(`[房间 ${roomId}] 修炼后经验: ${energyAfter.current}/${energyAfter.total}（Lv.${energyAfter.level} ${energyAfter.levelName}）`);
+    }
+  } else {
+    await sleep(2000);
+  }
+
+  // 突破：使用修炼后已读取的经验，满经验才发
   let breakthroughSent = false;
   const energy = await getPetEnergy(roomId).catch(() => null);
   if (energy) {
@@ -505,7 +528,7 @@ async function runOneCycle(roomId, cycleIndex) {
       breakthroughSent = btOk;
 
       if (btOk) {
-        log(`[房间 ${roomId}] 等待 12 秒后复查经验...`);
+        log(`[房间 ${roomId}] 等待 12 秒后复查突破结果...`);
         await sleep(12000);
         const energyAfter = await getPetEnergy(roomId).catch(() => null);
         if (energyAfter) {
