@@ -23,6 +23,24 @@ const YYAI_TOKEN = process.env.YYAI_TOKEN || '';
 const YYAI_ACCESS_TOKEN = process.env.YYAI_ACCESS_TOKEN || '';
 const YYAI_UID = process.env.YYAI_UID || '';
 
+// 已验证有弹幕宠物的备用直播间（2026-04-17 扫描）
+// 关播后自动轮换：优先检查列表前面的房间，找到开播且有蛋宠的就用
+const BACKUP_PET_ROOMS = [
+  '1788399444',  // 24小时弹幕宠物，乱斗经验房
+  '5456135',     // 【弹幕宠物】听雨助眠养宠物修仙
+  '1944499601',  // 弹幕宠物修仙24小时玩法
+  '1775716505',  // 随缘接调音混音编曲 24小时挂宠物
+  '31117119',    // 七宝粉丝狂欢节
+  '58748',       // 修炼房
+  '22715338',    // 日常
+  '1962484529',  // 日常
+  '1993208412',  // 日常
+  '1786984737',  // 日常
+  '1827737362',  // 日常
+  '1733584032',  // 日常
+  '1895286111',  // 日常
+];
+
 const CSRF = (COOKIE.match(/bili_jct=([^;]+)/) || [])[1] || '';
 const CSRF_TOKEN = CSRF; // csrf_token 和 csrf 值相同
 
@@ -426,35 +444,64 @@ async function runOneCycle(roomId, cycleIndex) {
   return signinOk || cultivateOk || breakthroughOk;
 }
 
-// 检查直播间是否还在直播，如果关播则重试切换（最多等30秒）
+// 检查直播间是否还在直播，如果关播则从备用蛋宠房列表中换房
 async function checkAndSwitchRoom(currentRoomId) {
   const isLive = await getRoomStatus(currentRoomId);
   if (isLive) {
     return { roomId: currentRoomId, available: true };
   }
 
-  warn(`直播间 ${currentRoomId} 已关播，等待重试...`);
+  warn(`直播间 ${currentRoomId} 已关播，开始自动换房...`);
   for (let retry = 1; retry <= 3; retry++) {
-    await sleep(10000); // 等10秒
+    await sleep(10000);
     const newRoomId = await findLiveRoom();
     if (newRoomId) {
-      log(`重试 ${retry}：找到新直播间 ${newRoomId}`);
+      log(`[换房] 第${retry}次尝试成功，切换到房间 ${newRoomId}`);
       await enterRoom(newRoomId);
-      log('已进场新直播间');
+      log('[换房] 已进场新直播间');
       return { roomId: newRoomId, available: true };
     }
-    warn(`重试 ${retry}/3：仍未找到直播中的房间，继续等待...`);
+    warn(`[换房] 第${retry}/3次尝试：未找到可用的蛋宠房，继续等待...`);
   }
 
-  warn('所有重试均失败，本轮弹幕跳过');
+  warn('[换房] 所有尝试均失败，本轮跳过');
   return { roomId: currentRoomId, available: false };
 }
 
 async function findLiveRoom() {
-  const rooms = ['732', '3', '5441', '1013'];
-  for (const id of rooms) {
-    if (await getRoomStatus(id)) return id;
+  // 优先从已验证有弹幕宠物的备用房间列表中找开播的
+  log(`[换房] 从 ${BACKUP_PET_ROOMS.length} 个备用蛋宠房中查找...`);
+  for (const id of BACKUP_PET_ROOMS) {
+    const isLive = await getRoomStatus(id).catch(() => false);
+    if (isLive) {
+      // 快速验证是否真的有弹幕宠物
+      try {
+        const html = await fetchHtml(`https://live.bilibili.com/${id}`, `https://live.bilibili.com/${id}`);
+        if (html && html.includes('interactive_game_tag') && html.includes('弹幕宠物')) {
+          log(`[换房] ✅ 房间 ${id} 开播且有弹幕宠物`);
+          return id;
+        }
+        // 页面有内容但没有蛋宠标记，也试试（可能是页面结构变化）
+        if (html && html.includes('heikeyun')) {
+          log(`[换房] ✅ 房间 ${id} 开播且检测到 heikeyun 面板`);
+          return id;
+        }
+        warn(`[换房] 房间 ${id} 开播但无弹幕宠物标记，跳过`);
+      } catch (e) {
+        warn(`[换房] 房间 ${id} 页面验证失败: ${e.message}，跳过`);
+      }
+    }
   }
+
+  // 回退: 旧的固定房间（兼容）
+  const fallbackRooms = ['732', '3', '5441', '1013'];
+  for (const id of fallbackRooms) {
+    if (await getRoomStatus(id).catch(() => false)) {
+      warn(`[换房] 未找到蛋宠房，回退使用固定房 ${id}（不保证有蛋宠）`);
+      return id;
+    }
+  }
+
   return null;
 }
 
