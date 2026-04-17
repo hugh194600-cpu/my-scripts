@@ -219,19 +219,26 @@ async function heartbeat(roomId) {
 // 宠物面板 - 经验读取
 // ==============================
 
-function fetchHtml(targetUrl, referer = '') {
+function fetchHtml(targetUrl, referer = '', noCache = false) {
   return new Promise((resolve, reject) => {
     const follow = (url, hops = 0) => {
       if (hops > 4) return reject(new Error('跳转次数过多'));
       const u = new URL(url);
       const lib = u.protocol === 'https:' ? https : http;
+      // 防缓存：加时间戳参数
+      let path = u.pathname + u.search;
+      if (noCache) {
+        path += (u.search ? '&' : '?') + '_t=' + Date.now();
+      }
       const opts = {
         hostname: u.hostname,
-        path: u.pathname + u.search,
+        path: path,
         method: 'GET',
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          'Referer': referer || url
+          'Referer': referer || url,
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache',
         }
       };
       const req = lib.request(opts, (res) => {
@@ -334,9 +341,10 @@ async function getPetEnergy(roomId) {
   const meta = await getPanelUrl(roomId);
   if (!meta) return null;
 
+  // 每次读经验都强制刷新面板（ASP.NET 会缓存页面，必须 noCache）
   let panelHtml = '';
   try {
-    panelHtml = await fetchHtml(meta.panelUrl, `https://live.bilibili.com/${roomId}`);
+    panelHtml = await fetchHtml(meta.panelUrl, `https://live.bilibili.com/${roomId}`, true);
   } catch (e) {
     warn(`[经验] 面板请求失败: ${e.message}`);
     return null;
