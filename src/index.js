@@ -1,10 +1,11 @@
 /**
- * B站弹幕宠物挂机 - 单房间修炼版 v5
+ * B站弹幕宠物挂机 - 单房间修炼版 v6
  * 核心逻辑：同一时间只在一个房间修炼，关播后才切换到下一个房间
  * 每轮对当前房间执行：
  *   - 签到（每天一次）
- *   - 修炼（每轮都发）
+ *   - 修炼（每轮都发，12秒后校验经验增量）
  *   - 突破（仅当前经验 >= 满经验时才发）
+ * 等待期间每60秒发一次心跳保活，维持直播间在线状态
  */
 
 const https = require('https');
@@ -16,8 +17,9 @@ const tls = require('tls');
 // ==============================
 const COOKIE = process.env.BILIBILI_COOKIE || '';
 const HANGUP_ROOM_ID = process.env.HANGUP_ROOM_ID || '';  // 首选房间；为空则自动扫房
-const CYCLE_MINUTES = parseInt(process.env.CYCLE_MINUTES || '10', 10);
-const MAX_RUNTIME_MINUTES = parseInt(process.env.MAX_RUNTIME_MINUTES || '25', 10);
+const CYCLE_MINUTES = parseInt(process.env.CYCLE_MINUTES || '6', 10);       // 修炼间隔（默认6分钟，贴近冷却期）
+const MAX_RUNTIME_MINUTES = parseInt(process.env.MAX_RUNTIME_MINUTES || '55', 10); // 最大运行时长（默认55分钟）
+const HEARTBEAT_INTERVAL = 60 * 1000;  // 心跳保活间隔：60秒
 const MAIL_USER = process.env.QQ_MAIL_USER || '';
 const MAIL_PASS = process.env.QQ_MAIL_PASS || '';
 
@@ -554,7 +556,7 @@ async function runOneCycle(roomId, cycleIndex) {
 // 主逻辑：单房间修炼，关播换房
 // ==============================
 async function main() {
-  log('=== B站弹幕宠物挂机 v5 单房间修炼版启动 ===');
+  log('=== B站弹幕宠物挂机 v6 单房间修炼+心跳保活版启动 ===');
 
   if (!await checkLogin()) process.exit(1);
 
@@ -633,8 +635,38 @@ async function main() {
       break;
     }
 
-    log(`等待 ${CYCLE_MINUTES} 分钟后进入下一轮...`);
-    await sleep(cycleMs);
+    log(`等待 ${CYCLE_MINUTES} 分钟后进入下一轮（期间每60秒心跳保活）...`);
+    // 在等待期间每隔60秒发一次心跳，维持直播间在线状态
+    const waitStart = Date.now();
+    const waitMs = cycleMs;
+    while (Date.now() - waitStart < waitMs) {
+      const remaining = waitMs - (Date.now() - waitStart);
+      if (remaining <= HEARTBEAT_INTERVAL) {
+        await sleep(remaining);
+        break;
+      }
+      await sleep(HEARTBEAT_INTERVAL);
+      // 心跳保活
+      if (currentRoomId) {
+        const hbOk = await heartbeat(currentRoomId).catch(() => false);
+        if (hbOk) {
+          log(`[心跳] 房间 ${currentRoomId} 保活 ✅`);
+        } else {
+          warn(`[心跳] 房间 ${currentRoomId} 保活失败`);
+        }
+      }
+      // 心跳时顺便检查是否关播
+      if (currentRoomId) {
+        const stillLive = await getRoomStatus(currentRoomId).catch(() => false);
+        if (!stillLive) {
+          warn(`[换房] 房间 ${currentRoomId} 已关播！立即切换...`);
+          currentRoomId = null;
+          roomPanelCache.clear();
+          stats.roomSwitches++;
+          break; // 跳出等待循环，立即重新找房
+        }
+      }
+    }
   }
 
   // 最终汇总
