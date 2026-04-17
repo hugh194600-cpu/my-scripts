@@ -19,7 +19,6 @@ const COOKIE = process.env.BILIBILI_COOKIE || '';
 const HANGUP_ROOM_ID = process.env.HANGUP_ROOM_ID || '';  // 首选房间；为空则自动扫房
 const CYCLE_MINUTES = parseInt(process.env.CYCLE_MINUTES || '6', 10);       // 修炼间隔（默认6分钟，贴近冷却期）
 const MAX_RUNTIME_MINUTES = parseInt(process.env.MAX_RUNTIME_MINUTES || '55', 10); // 最大运行时长（默认55分钟）
-const HEARTBEAT_INTERVAL = 60 * 1000;  // 心跳保活间隔：60秒
 const MAIL_USER = process.env.QQ_MAIL_USER || '';
 const MAIL_PASS = process.env.QQ_MAIL_PASS || '';
 
@@ -211,10 +210,33 @@ async function sendDanmu(roomId, msg) {
   return res.code === 0;
 }
 
+// 心跳保活间隔（动态更新，首次默认60秒）
+let nextHeartbeatInterval = 60;
+
 async function heartbeat(roomId) {
-  const body = `visit_id=&room_id=${roomId}`;
-  const res = await livePost('/xlive/web-room/v2/index/webHeartBeat', body, roomId);
-  return res.code === 0;
+  // B站直播心跳接口：GET live-trace.bilibili.com/xlive/rdata-interface/v1/heartbeat/webHeartBeat
+  // hb 参数 = base64("{interval}|{真实房间号}|1|0")
+  const hbRaw = `${nextHeartbeatInterval}|${roomId}|1|0`;
+  const hbEncoded = Buffer.from(hbRaw).toString('base64');
+  const path = `/xlive/rdata-interface/v1/heartbeat/webHeartBeat?hb=${encodeURIComponent(hbEncoded)}&pf=web`;
+  try {
+    const res = await request({
+      hostname: 'live-trace.bilibili.com',
+      path: path,
+      method: 'GET',
+      headers: {
+        'Cookie': COOKIE,
+        'Referer': `https://live.bilibili.com/${roomId}`,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+      }
+    });
+    if (res.code === 0 && res.data?.next_interval) {
+      nextHeartbeatInterval = res.data.next_interval;
+    }
+    return res.code === 0;
+  } catch (e) {
+    return false;
+  }
 }
 
 // ==============================
@@ -635,35 +657,40 @@ async function main() {
       break;
     }
 
-    log(`等待 ${CYCLE_MINUTES} 分钟后进入下一轮（期间每60秒心跳保活）...`);
-    // 在等待期间每隔60秒发一次心跳，维持直播间在线状态
+    log(`等待 ${CYCLE_MINUTES} 分钟后进入下一轮（期间心跳保活）...`);
+    // 在等待期间按服务器返回的间隔发心跳，维持直播间在线状态
     const waitStart = Date.now();
     const waitMs = cycleMs;
+    let hbCount = 0;
     while (Date.now() - waitStart < waitMs) {
+      const hbIntervalMs = nextHeartbeatInterval * 1000;
       const remaining = waitMs - (Date.now() - waitStart);
-      if (remaining <= HEARTBEAT_INTERVAL) {
+      if (remaining <= hbIntervalMs) {
         await sleep(remaining);
         break;
       }
-      await sleep(HEARTBEAT_INTERVAL);
+      await sleep(hbIntervalMs);
       // 心跳保活
       if (currentRoomId) {
         const hbOk = await heartbeat(currentRoomId).catch(() => false);
+        hbCount++;
         if (hbOk) {
-          log(`[心跳] 房间 ${currentRoomId} 保活 ✅`);
+          log(`[心跳] 房间 ${currentRoomId} 保活 ✅（下次间隔 ${nextHeartbeatInterval}s）`);
         } else {
           warn(`[心跳] 房间 ${currentRoomId} 保活失败`);
         }
+        // 每3次心跳检查一次房间是否关播（避免请求太频繁）
+        if (hbCount % 3 === 0) {
+          const stillLive = await getRoomStatus(currentRoomId).catch(() => true);
+          if (!stillLive) {
+            warn(`[换房] 房间 ${currentRoomId} 已关播！立即切换...`);
+            currentRoomId = null;
+            roomPanelCache.clear();
+            stats.roomSwitches++;
+            break;
+          }
+        }
       }
-      // 心跳时顺便检查是否关播
-      if (currentRoomId) {
-        const stillLive = await getRoomStatus(currentRoomId).catch(() => false);
-        if (!stillLive) {
-          warn(`[换房] 房间 ${currentRoomId} 已关播！立即切换...`);
-          currentRoomId = null;
-          roomPanelCache.clear();
-          stats.roomSwitches++;
-          break; // 跳出等待循环，立即重新找房
         }
       }
     }
