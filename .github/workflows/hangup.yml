@@ -1,9 +1,9 @@
-﻿name: B站弹幕宠物挂机
+name: B站弹幕宠物挂机
 
 on:
   schedule:
-    # 每6小时触发一次（UTC 0,6,12,18 = 北京时间 8,14,20,2）
-    - cron: '0 0,6,12,18 * * *'
+    # 北京时间 08:00 / 20:00 各触发一次
+    - cron: '0 0,12 * * *'
 
   workflow_dispatch:
     inputs:
@@ -12,17 +12,20 @@ on:
         required: false
         default: '10'
       max_runtime_minutes:
-        description: '最大运行时长（分钟），默认 360（6小时）'
+        description: '最大运行时长（分钟），默认 25'
         required: false
-        default: '360'
+        default: '25'
 
+# 并发控制：同一时间只允许一个挂机运行，新触发不会取消旧运行
+concurrency:
+  group: hangup-single
+  cancel-in-progress: false
 
 jobs:
   hangup:
     name: 弹幕宠物挂机
     runs-on: ubuntu-latest
-    timeout-minutes: 400
-
+    timeout-minutes: 30
 
     steps:
       - name: 检出代码
@@ -47,7 +50,5 @@ jobs:
           YYAI_ACCESS_TOKEN: ${{ secrets.YYAI_ACCESS_TOKEN }}
           YYAI_UID: ${{ secrets.YYAI_UID }}
           CYCLE_MINUTES: ${{ github.event.inputs.cycle_minutes || '10' }}
-          MAX_RUNTIME_MINUTES: ${{ github.event.inputs.max_runtime_minutes || '360' }}
+          MAX_RUNTIME_MINUTES: ${{ github.event.inputs.max_runtime_minutes || '25' }}
         run: node src/index.js
-
-

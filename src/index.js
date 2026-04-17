@@ -1,7 +1,8 @@
 /**
- * B站弹幕宠物挂机 - 多房间版 v4
- * 每轮对所有有蛋宠的开播房间执行：
- *   - 签到（每天每房间一次）
+ * B站弹幕宠物挂机 - 单房间修炼版 v5
+ * 核心逻辑：同一时间只在一个房间修炼，关播后才切换到下一个房间
+ * 每轮对当前房间执行：
+ *   - 签到（每天一次）
  *   - 修炼（每轮都发）
  *   - 突破（仅当前经验 >= 满经验时才发）
  */
@@ -14,9 +15,9 @@ const tls = require('tls');
 // 配置
 // ==============================
 const COOKIE = process.env.BILIBILI_COOKIE || '';
-const HANGUP_ROOM_ID = process.env.HANGUP_ROOM_ID || '';  // 优先使用；为空则自动扫房
+const HANGUP_ROOM_ID = process.env.HANGUP_ROOM_ID || '';  // 首选房间；为空则自动扫房
 const CYCLE_MINUTES = parseInt(process.env.CYCLE_MINUTES || '10', 10);
-const MAX_RUNTIME_MINUTES = parseInt(process.env.MAX_RUNTIME_MINUTES || '360', 10);
+const MAX_RUNTIME_MINUTES = parseInt(process.env.MAX_RUNTIME_MINUTES || '25', 10);
 const MAIL_USER = process.env.QQ_MAIL_USER || '';
 const MAIL_PASS = process.env.QQ_MAIL_PASS || '';
 
@@ -26,7 +27,7 @@ const YYAI_ACCESS_TOKEN = process.env.YYAI_ACCESS_TOKEN || '';
 const YYAI_UID = process.env.YYAI_UID || '';
 
 // 已验证有弹幕宠物的备用直播间（2026-04-17 扫描）
-// 关播后自动轮换：优先检查列表前面的房间，找到开播且有蛋宠的就用
+// 关播后自动轮换：依次尝试列表中的房间，找到开播且有蛋宠的就用
 const BACKUP_PET_ROOMS = [
   '1788399444',  // 24小时弹幕宠物，乱斗经验房
   '5456135',     // 【弹幕宠物】听雨助眠养宠物修仙
@@ -50,12 +51,11 @@ const CSRF_TOKEN = CSRF;
 // 状态
 // ==============================
 const signedRooms = new Set();        // 今天已签到的房间
-const lastSigninDate = getTodayCST(); // 上次签到日期（北京时间）
+let lastSigninDate = getTodayCST();   // 上次签到日期（北京时间）
 const roomPanelCache = new Map();     // roomId -> { gameId, panelUrl, energy } 面板缓存
 
 function getTodayCST() {
   const now = new Date();
-  // 北京时间 = UTC+8
   const cst = new Date(now.getTime() + 8 * 60 * 60 * 1000);
   return `${cst.getUTCFullYear()}-${String(cst.getUTCMonth() + 1).padStart(2, '0')}-${String(cst.getUTCDate()).padStart(2, '0')}`;
 }
@@ -225,7 +225,6 @@ function fetchHtml(targetUrl, referer = '', noCache = false) {
       if (hops > 4) return reject(new Error('跳转次数过多'));
       const u = new URL(url);
       const lib = u.protocol === 'https:' ? https : http;
-      // 防缓存：加时间戳参数
       let path = u.pathname + u.search;
       if (noCache) {
         path += (u.search ? '&' : '?') + '_t=' + Date.now();
@@ -267,7 +266,6 @@ function fetchHtml(targetUrl, referer = '', noCache = false) {
 }
 
 async function getPanelUrl(roomId) {
-  // 缓存命中
   const cached = roomPanelCache.get(roomId);
   if (cached?.panelUrl) {
     log(`[面板] 房间 ${roomId} 使用缓存 panel_url`);
@@ -341,7 +339,6 @@ async function getPetEnergy(roomId) {
   const meta = await getPanelUrl(roomId);
   if (!meta) return null;
 
-  // 每次读经验都强制刷新面板（ASP.NET 会缓存页面，必须 noCache）
   let panelHtml = '';
   try {
     panelHtml = await fetchHtml(meta.panelUrl, `https://live.bilibili.com/${roomId}`, true);
@@ -366,16 +363,8 @@ async function getPetEnergy(roomId) {
   const result = { current, total, level: lv ? lv[1].trim() : '?', levelName: lvN ? lvN[1].trim() : '?' };
   log(`[经验] 房间 ${roomId}: ${current}/${total}（Lv.${result.level} ${result.levelName}）`);
 
-  // 更新缓存
   meta.energy = result;
   return result;
-}
-
-// 检测突破提示文字
-function detectBreakthroughHint(panelHtml) {
-  if (!panelHtml) return false;
-  // 面板中出现"当前可突破"或"可突破"等提示
-  return panelHtml.includes('当前可突破') || panelHtml.includes('可突破') || panelHtml.includes('请发送突破指令');
 }
 
 // ==============================
@@ -419,10 +408,9 @@ async function doYyaiSignin() {
 }
 
 // ==============================
-// 多房间检测
+// 房间查找
 // ==============================
 
-// 快速检查房间是否有弹幕宠物（不获取面板，只检查页面标记）
 async function roomHasPetTag(roomId) {
   try {
     const html = await fetchHtml(`https://live.bilibili.com/${roomId}`, `https://live.bilibili.com/${roomId}`);
@@ -435,49 +423,48 @@ async function roomHasPetTag(roomId) {
   }
 }
 
-// 扫描所有候选房间，返回当前可用（开播 + 有蛋宠）的房间列表
-async function scanAvailableRooms() {
+// 找到第一个开播且有蛋宠的房间（优先使用配置的首选房间）
+async function findFirstAvailableRoom() {
   const candidates = HANGUP_ROOM_ID ? [HANGUP_ROOM_ID, ...BACKUP_PET_ROOMS] : [...BACKUP_PET_ROOMS];
   const unique = [...new Set(candidates)];
-  const available = [];
 
-  log(`[扫房] 开始检测 ${unique.length} 个候选房间...`);
+  log(`[找房] 依次检测 ${unique.length} 个候选房间，找到第一个可用即停...`);
 
   for (const id of unique) {
     try {
       const isLive = await getRoomStatus(id);
-      if (!isLive) continue;
+      if (!isLive) {
+        log(`[找房] 房间 ${id} 未开播，跳过`);
+        continue;
+      }
 
       // HANGUP_ROOM_ID 信任为有蛋宠，跳过页面验证
       if (id === HANGUP_ROOM_ID) {
-        log(`[扫房] ✅ 房间 ${id}（配置房）开播`);
-        available.push(id);
-        continue;
+        log(`[找房] ✅ 房间 ${id}（配置房）开播，使用此房间`);
+        return id;
       }
 
       const hasPet = await roomHasPetTag(id);
       if (hasPet) {
-        log(`[扫房] ✅ 房间 ${id} 开播且有蛋宠`);
-        available.push(id);
+        log(`[找房] ✅ 房间 ${id} 开播且有蛋宠，使用此房间`);
+        return id;
       } else {
-        warn(`[扫房] 房间 ${id} 开播但无蛋宠标记，跳过`);
+        log(`[找房] 房间 ${id} 开播但无蛋宠，跳过`);
       }
     } catch (e) {
-      warn(`[扫房] 房间 ${id} 检测异常: ${e.message}`);
+      warn(`[找房] 房间 ${id} 检测异常: ${e.message}`);
     }
 
-    // 每个房间间隔 1 秒，避免请求过快
     await sleep(1000);
   }
 
-  log(`[扫房] 共找到 ${available.length} 个可用蛋宠房: [${available.join(', ')}]`);
-  return available;
+  return null;
 }
 
 // ==============================
 // 单房间单轮执行
 // ==============================
-async function runOneRoomCycle(roomId, cycleIndex) {
+async function runOneCycle(roomId, cycleIndex) {
   log(`--- 房间 ${roomId} 第 ${cycleIndex} 轮 ---`);
 
   await heartbeat(roomId);
@@ -486,6 +473,7 @@ async function runOneRoomCycle(roomId, cycleIndex) {
   const today = getTodayCST();
   if (today !== lastSigninDate) {
     signedRooms.clear();
+    lastSigninDate = today;
     log(`[签到] 新的一天（${today}），重置签到记录`);
   }
 
@@ -501,7 +489,7 @@ async function runOneRoomCycle(roomId, cycleIndex) {
     await sleep(2000);
   }
 
-  // 修炼：每轮都发
+  // 修炼
   const cultivateOk = await sendDanmu(roomId, '修炼');
   log(`[房间 ${roomId}] 修炼: ${cultivateOk ? '✅' : '❌'}`);
   await sleep(2000);
@@ -516,7 +504,6 @@ async function runOneRoomCycle(roomId, cycleIndex) {
       log(`[房间 ${roomId}] 突破: ${btOk ? '✅' : '❌'}`);
       breakthroughSent = btOk;
 
-      // 突破后 12 秒复查经验，确认突破生效
       if (btOk) {
         log(`[房间 ${roomId}] 等待 12 秒后复查经验...`);
         await sleep(12000);
@@ -524,7 +511,6 @@ async function runOneRoomCycle(roomId, cycleIndex) {
         if (energyAfter) {
           const delta = energyAfter.current - energy.current;
           log(`[房间 ${roomId}] 突破后经验: ${energyAfter.current}/${energyAfter.total}（变化 ${delta >= 0 ? '+' : ''}${delta}）`);
-          // 突破成功后清除面板缓存，下次重新获取
           if (energyAfter.total !== energy.total || energyAfter.level !== energy.level) {
             log(`[房间 ${roomId}] ✅ 突破确认生效！等级 ${energy.level} → ${energyAfter.level}，上限 ${energy.total} → ${energyAfter.total}`);
             roomPanelCache.delete(roomId);
@@ -542,110 +528,88 @@ async function runOneRoomCycle(roomId, cycleIndex) {
 }
 
 // ==============================
-// 主逻辑
+// 主逻辑：单房间修炼，关播换房
 // ==============================
 async function main() {
-  log('=== B站弹幕宠物挂机 v4 多房间版启动 ===');
+  log('=== B站弹幕宠物挂机 v5 单房间修炼版启动 ===');
 
   if (!await checkLogin()) process.exit(1);
 
   await doYyaiSignin();
 
-  // 首次扫描可用房间
-  let activeRooms = await scanAvailableRooms();
-  if (activeRooms.length === 0) {
-    warn('没有找到任何可用的蛋宠房间，退出');
-    process.exit(0);
-  }
-
-  // 进入所有房间
-  for (const id of activeRooms) {
-    await enterRoom(id);
-    log(`已进场房间 ${id}`);
-    await sleep(1000);
-  }
-
   const maxMs = MAX_RUNTIME_MINUTES * 60 * 1000;
   const cycleMs = CYCLE_MINUTES * 60 * 1000;
   const startTime = Date.now();
-  let cycle = 1;
-  let lastScanTime = 0;
-  const scanInterval = 30 * 60 * 1000; // 每 30 分钟重新扫一次房
 
   const stats = {
     totalCycles: 0,
     totalSignin: 0,
     totalCultivate: 0,
     totalBreakthrough: 0,
-    roomsUsed: activeRooms.length,
+    roomsUsed: 0,
+    roomSwitches: 0,
   };
+
+  // 当前修炼的房间
+  let currentRoomId = null;
+  let cycle = 1;
 
   while (Date.now() - startTime < maxMs) {
     log(`\n${'='.repeat(50)}`);
-    log(`第 ${cycle} 轮 | 活跃房间: ${activeRooms.length} | 已运行 ${Math.floor((Date.now() - startTime) / 60000)} 分钟`);
+    log(`第 ${cycle} 轮 | 已运行 ${Math.floor((Date.now() - startTime) / 60000)} 分钟 / 上限 ${MAX_RUNTIME_MINUTES} 分钟`);
     log(`${'='.repeat(50)}`);
 
-    // 定期重新扫描房间（每 30 分钟或首次第 1 轮之后）
-    if (cycle > 1 && Date.now() - lastScanTime > scanInterval) {
-      log('[扫房] 定期刷新房间列表...');
-      activeRooms = await scanAvailableRooms();
-      lastScanTime = Date.now();
-
-      if (activeRooms.length === 0) {
-        warn('刷新后没有可用房间，等待下一轮');
-        cycle++;
+    // ── 如果还没有当前房间，或者当前房间关播了，就找新房 ──
+    if (!currentRoomId) {
+      const found = await findFirstAvailableRoom();
+      if (!found) {
+        warn('没有找到任何可用的蛋宠房间');
+        // 等待一个周期后再试
+        const remaining = maxMs - (Date.now() - startTime);
+        if (remaining <= cycleMs) { log('剩余时间不足，结束'); break; }
+        log(`等待 ${CYCLE_MINUTES} 分钟后重新找房...`);
         await sleep(cycleMs);
+        cycle++;
         continue;
       }
-
-      // 进新发现的房间
-      for (const id of activeRooms) {
-        await enterRoom(id).catch(() => {});
-        await sleep(500);
-      }
+      currentRoomId = found;
+      stats.roomsUsed++;
+      log(`[换房] ✅ 进入房间 ${currentRoomId} 开始修炼`);
+      await enterRoom(currentRoomId);
+      await sleep(2000);
     }
-    if (cycle === 1) lastScanTime = Date.now();
 
-    // 对每个活跃房间执行一轮
-    const cycleResults = [];
-    for (const roomId of activeRooms) {
-      // 检查是否还开播
-      const isLive = await getRoomStatus(roomId).catch(() => false);
-      if (!isLive) {
-        warn(`[房间 ${roomId}] 已关播，本轮跳过`);
-        cycleResults.push({ roomId, status: 'offline' });
-        continue;
-      }
+    // ── 检查当前房间是否还开播 ──
+    const isLive = await getRoomStatus(currentRoomId).catch(() => false);
+    if (!isLive) {
+      warn(`[换房] 房间 ${currentRoomId} 已关播！寻找下一个房间...`);
+      currentRoomId = null;
+      roomPanelCache.clear(); // 换房清缓存
+      stats.roomSwitches++;
+      continue; // 立即重新找房，不等周期
+    }
 
-      try {
-        const result = await runOneRoomCycle(roomId, cycle);
-        cycleResults.push({ roomId, status: 'ok', ...result });
+    // ── 在当前房间执行一轮修炼 ──
+    try {
+      const result = await runOneCycle(currentRoomId, cycle);
 
-        if (result.cultivateOk) stats.totalCultivate++;
-        if (result.breakthroughSent) stats.totalBreakthrough++;
-      } catch (e) {
-        warn(`[房间 ${roomId}] 本轮异常: ${e.message}`);
-        cycleResults.push({ roomId, status: 'error', error: e.message });
-      }
-
-      // 房间之间间隔 3 秒
-      await sleep(3000);
+      if (result.cultivateOk) stats.totalCultivate++;
+      if (result.breakthroughSent) stats.totalBreakthrough++;
+      if (result.signinOk) stats.totalSignin++;
+    } catch (e) {
+      warn(`[房间 ${currentRoomId}] 本轮异常: ${e.message}`);
     }
 
     stats.totalCycles++;
     cycle++;
 
-    // 汇总本轮结果
-    const okCount = cycleResults.filter(r => r.status === 'ok').length;
-    const offlineCount = cycleResults.filter(r => r.status === 'offline').length;
-    log(`\n[汇总] 第 ${stats.totalCycles} 轮完成: ${okCount} 成功 / ${offlineCount} 离线`);
-
-    // 等待下一轮
+    // ── 检查剩余时间 ──
     const remaining = maxMs - (Date.now() - startTime);
     if (remaining <= cycleMs) {
       log('剩余时间不足一个周期，结束挂机');
       break;
     }
+
     log(`等待 ${CYCLE_MINUTES} 分钟后进入下一轮...`);
     await sleep(cycleMs);
   }
@@ -654,8 +618,10 @@ async function main() {
   log(`\n${'='.repeat(50)}`);
   log('=== 挂机结束 ===');
   log(`总轮次: ${stats.totalCycles}`);
-  log(`活跃房间: ${stats.roomsUsed}`);
+  log(`使用房间数: ${stats.roomsUsed}`);
+  log(`换房次数: ${stats.roomSwitches}`);
   log(`修炼成功: ${stats.totalCultivate}`);
+  log(`签到成功: ${stats.totalSignin}`);
   log(`突破次数: ${stats.totalBreakthrough}`);
   log(`总运行: ${Math.floor((Date.now() - startTime) / 60000)} 分钟`);
   log(`${'='.repeat(50)}`);
