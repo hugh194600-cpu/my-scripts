@@ -5,6 +5,7 @@
  */
 
 const https = require('https');
+const http = require('http');
 const tls = require('tls');
 
 // ==============================
@@ -186,6 +187,162 @@ async function heartbeat(roomId) {
 }
 
 // ==============================
+// 宠物面板经验读取（仅用于诊断）
+// ==============================
+
+// 带跳转的 HTTP/HTTPS GET，返回 HTML
+function fetchHtml(targetUrl, referer = '') {
+  return new Promise((resolve, reject) => {
+    const follow = (url, hops = 0) => {
+      if (hops > 4) return reject(new Error('跳转次数过多'));
+      const u = new URL(url);
+      const lib = u.protocol === 'https:' ? https : http;
+      const opts = {
+        hostname: u.hostname,
+        path: u.pathname + u.search,
+        method: 'GET',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Referer': referer || url
+        }
+      };
+      const req = lib.request(opts, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          const next = new URL(res.headers.location, url).toString();
+          res.resume();
+          return follow(next, hops + 1);
+        }
+        let html = '';
+        res.on('data', c => { html += c; });
+        res.on('end', () => {
+          const m = html.match(/Object moved to <a href="([^"]+)"/i);
+          if (m && hops < 4) {
+            const next = new URL(m[1], url).toString();
+            return follow(next, hops + 1);
+          }
+          resolve(html);
+        });
+      });
+      req.on('error', reject);
+      req.setTimeout(15000, () => req.destroy(new Error('fetchHtml 超时')));
+      req.end();
+    };
+    follow(targetUrl);
+  });
+}
+
+async function getPanelUrl(roomId) {
+  log(`[面板诊断] 获取直播间 ${roomId} 的 panel_url`);
+  let html = '';
+  try {
+    html = await fetchHtml(`https://live.bilibili.com/${roomId}`, `https://live.bilibili.com/${roomId}`);
+  } catch (e) {
+    warn(`[面板诊断] 直播间页面请求失败: ${e.message}`);
+    return null;
+  }
+  if (!html || html.length < 100) {
+    warn(`[面板诊断] 直播间页面内容异常（${html.length} 字节）`);
+    return null;
+  }
+  log(`[面板诊断] 直播间页面已获取（${html.length} 字节）`);
+
+  const tagMatch = html.match(/"interactive_game_tag":\{"action":\d+,"game_id":"([^"]+)","game_name":"([^"]+)"/);
+  let gameId = tagMatch ? tagMatch[1] : '';
+  const gameName = tagMatch ? tagMatch[2] : '';
+
+  if (tagMatch) {
+    log(`[面板诊断] interactive_game_tag: game_id="${gameId}" game_name="${gameName}"`);
+  } else {
+    warn('[面板诊断] interactive_game_tag 未匹配，尝试回退 game_id 正则');
+    const m = html.match(/"game_id"\s*:\s*"?(\d+)"?/);
+    if (!m) {
+      warn('[面板诊断] 回退 game_id 正则也未找到，该直播间可能没有弹幕宠物');
+      return null;
+    }
+    gameId = m[1];
+    log(`[面板诊断] 回退 game_id 命中: "${gameId}"`);
+  }
+
+  if (!gameId || (!gameName.includes('弹幕宠物') && tagMatch)) {
+    warn(`[面板诊断] game_name="${gameName}" 不含"弹幕宠物"，可能不是目标游戏`);
+  }
+
+  log(`[面板诊断] 请求 getAppCustomPanel，game_id="${gameId}"`);
+  let res;
+  try {
+    res = await request({
+      hostname: 'api.live.bilibili.com',
+      path: `/xlive/open-platform/v1/game/getAppCustomPanel?game_id=${encodeURIComponent(gameId)}`,
+      method: 'GET',
+      headers: {
+        'Cookie': COOKIE,
+        'Referer': `https://live.bilibili.com/${roomId}`,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+      }
+    });
+  } catch (e) {
+    warn(`[面板诊断] getAppCustomPanel 请求异常: ${e.message}`);
+    return null;
+  }
+
+  if (!res || res.code !== 0) {
+    warn(`[面板诊断] getAppCustomPanel 返回错误: code=${res?.code} msg=${res?.message || ''}`);
+    return null;
+  }
+
+  const url = res?.data?.panel_url || res?.data?.list?.[0]?.panel_url;
+  if (!url) {
+    warn(`[面板诊断] panel_url 为空，data 片段: ${JSON.stringify(res?.data).slice(0, 200)}`);
+    return null;
+  }
+  if (!url.includes('heikeyun')) {
+    warn(`[面板诊断] panel_url 不含 heikeyun，跳过: ${url.slice(0, 120)}`);
+    return null;
+  }
+
+  log(`[面板诊断] panel_url: ${url.slice(0, 120)}`);
+  return { gameId, panelUrl: url };
+}
+
+async function getPetEnergy(roomId) {
+  const meta = await getPanelUrl(roomId).catch((e) => {
+    warn(`[经验诊断] getPanelUrl 异常: ${e.message}`);
+    return null;
+  });
+  if (!meta) { warn('[经验诊断] 无法获取 panel_url，跳过经验读取'); return null; }
+
+  let panelHtml = '';
+  try {
+    panelHtml = await fetchHtml(meta.panelUrl, `https://live.bilibili.com/${roomId}`);
+  } catch (e) {
+    warn(`[经验诊断] 面板 HTML 请求失败: ${e.message}`);
+    return null;
+  }
+  if (!panelHtml) { warn('[经验诊断] 面板 HTML 为空'); return null; }
+  log(`[经验诊断] 面板 HTML 已获取（${panelHtml.length} 字节）`);
+
+  const cur  = panelHtml.match(/id="lblUserEnergy2"[^>]*>([^<]+)</);
+  const full = panelHtml.match(/id="lblUserEnergyDown"[^>]*>([^<]+)</);
+  const lv   = panelHtml.match(/id="lblUserLevel"[^>]*>([^<]+)</);
+  const lvN  = panelHtml.match(/id="lblUserLevelName"[^>]*>([^<]+)</);
+
+  if (!cur || !full) {
+    const lblIds = [...panelHtml.matchAll(/id="(lbl[^"]+)"/gi)].map(m => m[1]);
+    if (lblIds.length > 0) {
+      warn(`[经验诊断] 未找到经验字段，面板 lbl* 字段: ${lblIds.join(', ')}`);
+    } else {
+      warn('[经验诊断] 面板中无任何 lbl* 字段，页面结构可能已变更');
+    }
+    return null;
+  }
+
+  const current = parseInt(cur[1].trim(), 10);
+  const total   = parseInt(full[1].trim(), 10);
+  log(`[经验诊断] 经验: ${current}/${total}（Lv.${lv ? lv[1].trim() : '?'} ${lvN ? lvN[1].trim() : '?'}）`);
+  return { current, total, level: lv ? lv[1].trim() : '?', levelName: lvN ? lvN[1].trim() : '?' };
+}
+
+// ==============================
 // 边界AI签到
 // ==============================
 async function doYyaiSignin() {
@@ -238,8 +395,28 @@ async function runOneCycle(roomId, cycleIndex) {
   log(`签到: ${signinOk ? '✅' : '❌'}`);
 
   await sleep(2000);
+
+  // 修炼前读一次经验基线
+  const energyBefore = await getPetEnergy(roomId).catch(() => null);
+  if (energyBefore) {
+    log(`[经验诊断] 修炼前经验: ${energyBefore.current}/${energyBefore.total}`);
+  }
+
   const cultivateOk = await sendDanmu(roomId, '修炼');
   log(`修炼: ${cultivateOk ? '✅' : '❌'}`);
+
+  // 修炼后等 15 秒再读一次，确认是否有经验增量
+  if (cultivateOk) {
+    log('[经验诊断] 修炼弹幕已发出，等待 15 秒后复查经验...');
+    await sleep(15000);
+    const energyAfter = await getPetEnergy(roomId).catch(() => null);
+    if (energyAfter && energyBefore) {
+      const delta = energyAfter.current - energyBefore.current;
+      log(`[经验诊断] 修炼后经验: ${energyAfter.current}/${energyAfter.total}（增量 ${delta >= 0 ? '+' : ''}${delta}）`);
+    } else if (energyAfter) {
+      log(`[经验诊断] 修炼后经验: ${energyAfter.current}/${energyAfter.total}（无基线对比）`);
+    }
+  }
 
   await sleep(2000);
   const breakthroughOk = await sendDanmu(roomId, '突破');
