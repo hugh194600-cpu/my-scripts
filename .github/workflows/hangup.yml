@@ -2,26 +2,26 @@
 
 on:
   schedule:
-    # 省额度版：每天两次（北京时间 08:00 / 20:00）
-    - cron: '0 0,12 * * *'
+    # 每6小时触发一次（UTC 0,6,12,18 = 北京时间 8,14,20,2）
+    - cron: '0 0,6,12,18 * * *'
 
   workflow_dispatch:
     inputs:
       cycle_minutes:
-        description: '每轮间隔（分钟），默认 5'
+        description: '每轮间隔（分钟），默认 10'
         required: false
-        default: '5'
+        default: '10'
       max_runtime_minutes:
-        description: '最大运行时长（分钟），默认 60'
+        description: '最大运行时长（分钟），默认 360（6小时）'
         required: false
-        default: '60'
+        default: '360'
 
 
 jobs:
   hangup:
     name: 弹幕宠物挂机
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 400
 
 
     steps:
@@ -46,8 +46,8 @@ jobs:
           YYAI_TOKEN: ${{ secrets.YYAI_TOKEN }}
           YYAI_ACCESS_TOKEN: ${{ secrets.YYAI_ACCESS_TOKEN }}
           YYAI_UID: ${{ secrets.YYAI_UID }}
-          CYCLE_MINUTES: ${{ github.event.inputs.cycle_minutes || '5' }}
-          MAX_RUNTIME_MINUTES: ${{ github.event.inputs.max_runtime_minutes || '60' }}
+          CYCLE_MINUTES: ${{ github.event.inputs.cycle_minutes || '10' }}
+          MAX_RUNTIME_MINUTES: ${{ github.event.inputs.max_runtime_minutes || '360' }}
         run: node src/index.js
 
 
