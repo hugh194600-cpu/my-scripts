@@ -706,6 +706,47 @@ async function main() {
   log(`总运行: ${Math.floor((Date.now() - startTime) / 60000)} 分钟`);
   log(`${'='.repeat(50)}`);
 
+  // 续命：退出前触发下一次 workflow run，确保 24 小时不间断
+  const _token = process.env.GITHUB_TOKEN;
+  const _repo  = process.env.GITHUB_REPOSITORY;
+  if (_token && _repo) {
+    const [owner, repoName] = _repo.split('/');
+    log('[续命] 触发下一次 hangup workflow...');
+    try {
+      const _body = JSON.stringify({ ref: 'main' });
+      const _res = await new Promise((resolve, reject) => {
+        const _req = https.request({
+          hostname: 'api.github.com',
+          path: `/repos/${owner}/${repoName}/actions/workflows/hangup.yml/dispatches`,
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${_token}`,
+            'Accept': 'application/vnd.github+json',
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(_body),
+            'User-Agent': 'bilibili-hangup-bot',
+            'X-GitHub-Api-Version': '2022-11-28',
+          }
+        }, r => {
+          let d = '';
+          r.on('data', c => d += c);
+          r.on('end', () => resolve({ status: r.statusCode, body: d }));
+        });
+        _req.on('error', reject);
+        _req.setTimeout(10000, () => _req.destroy());
+        _req.write(_body);
+        _req.end();
+      });
+      if (_res.status === 204) {
+        log('[续命] ✅ 下一次 run 已触发');
+      } else {
+        warn(`[续命] 触发失败: HTTP ${_res.status} ${_res.body}`);
+      }
+    } catch (e) {
+      warn(`[续命] 触发异常: ${e.message}`);
+    }
+  }
+
   return stats;
 }
 
