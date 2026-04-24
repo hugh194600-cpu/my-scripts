@@ -35,7 +35,7 @@ jobs:
           # 多账号配置（JSON 格式，取消注释并配置 Secrets）
           # CODEBUDDY_ACCOUNTS: ${{ secrets.CODEBUDDY_ACCOUNTS }}
         run: |
-          python codebuddy_checkin.py
+          cd codebuddy-checkin && python codebuddy_checkin.py
 
       - name: 📊 签到结果通知（可选）
         if: always()
