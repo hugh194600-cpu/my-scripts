@@ -28,6 +28,9 @@ jobs:
 
       - name: 🚀 执行签到脚本
         env:
+          # 强制 UTF-8 编码（解决 GitHub Actions 环境编码问题）
+          PYTHONIOENCODING: utf-8
+
           # 单账号配置（取消注释并配置 Secrets）
           CODEBUDDY_COOKIE: ${{ secrets.CODEBUDDY_COOKIE }}
           CODEBUDDY_USER_ID: ${{ secrets.CODEBUDDY_USER_ID }}
