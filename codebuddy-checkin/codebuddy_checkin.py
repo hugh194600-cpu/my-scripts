@@ -88,14 +88,14 @@ class CodeBuddyCheckin:
             # 检查响应状态
             if response.status_code == 200:
                 result = response.json()
-                logger.info(f"✅ 签到成功！响应: {result}")
+                logger.info(f"[成功] 签到成功！响应: {result}")
                 return {
                     "success": True,
                     "message": "签到成功",
                     "data": result
                 }
             else:
-                logger.error(f"❌ 签到失败！状态码: {response.status_code}, 响应: {response.text}")
+                logger.error(f"[失败] 签到失败！状态码: {response.status_code}, 响应: {response.text}")
                 return {
                     "success": False,
                     "message": f"HTTP {response.status_code}",
@@ -103,15 +103,15 @@ class CodeBuddyCheckin:
                 }
 
         except requests.exceptions.Timeout:
-            logger.error("❌ 请求超时")
+            logger.error("[失败] 请求超时")
             return {"success": False, "message": "请求超时", "data": None}
 
         except requests.exceptions.RequestException as e:
-            logger.error(f"❌ 请求异常: {str(e)}")
+            logger.error(f"[失败] 请求异常: {str(e)}")
             return {"success": False, "message": str(e), "data": None}
 
         except Exception as e:
-            logger.error(f"❌ 未知错误: {str(e)}")
+            logger.error(f"[失败] 未知错误: {str(e)}")
             return {"success": False, "message": str(e), "data": None}
 
 
