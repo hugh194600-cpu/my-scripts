@@ -89,10 +89,12 @@ class CodeBuddyCheckin:
             log_info(f"开始签到... [User: {self.user_id[:8]}...]")
 
             # 发送请求
+            log_info(f"请求 URL: {CHECKIN_URL}")
             response = self.session.get(
                 CHECKIN_URL,
                 timeout=TIMEOUT
             )
+            log_info(f"响应状态码: {response.status_code}")
 
             # 强制指定编码为 UTF-8（避免 requests 默认使用 latin-1）
             response.encoding = 'utf-8'
@@ -109,15 +111,26 @@ class CodeBuddyCheckin:
                         "data": None
                     }
 
-                result = response.json()
-                log_info(f"[成功] 签到成功！响应: {result}")
-                return {
-                    "success": True,
-                    "message": "签到成功",
-                    "data": result
-                }
+                # 尝试解析 JSON
+                try:
+                    result = response.json()
+                    log_info(f"[成功] 签到成功！响应: {result}")
+                    return {
+                        "success": True,
+                        "message": "签到成功",
+                        "data": result
+                    }
+                except ValueError as json_err:
+                    # JSON 解析失败，记录响应内容前 500 字符
+                    log_error(f"[失败] 响应不是有效 JSON: {json_err}")
+                    log_error(f"[失败] 响应内容: {response.text[:500]}")
+                    return {
+                        "success": False,
+                        "message": "响应不是有效 JSON",
+                        "data": None
+                    }
             else:
-                log_error(f"[失败] 签到失败！状态码: {response.status_code}")
+                log_error(f"[失败] 签到失败！状态码: {response.status_code}, 响应: {response.text[:200]}")
                 return {
                     "success": False,
                     "message": f"HTTP {response.status_code}",
