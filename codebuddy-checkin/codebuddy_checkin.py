@@ -116,12 +116,16 @@ class CodeBuddyCheckin:
             return {"success": False, "message": "请求超时", "data": None}
 
         except requests.exceptions.RequestException as e:
-            logger.error(f"[失败] 请求异常: {str(e)}")
-            return {"success": False, "message": str(e), "data": None}
+            # 安全处理错误信息（避免编码问题）
+            error_msg = str(e).encode('ascii', 'ignore').decode('ascii')
+            logger.error(f"[失败] 请求异常: {error_msg}")
+            return {"success": False, "message": error_msg, "data": None}
 
         except Exception as e:
-            logger.error(f"[失败] 未知错误: {str(e)}")
-            return {"success": False, "message": str(e), "data": None}
+            # 安全处理错误信息（避免编码问题）
+            error_msg = str(e).encode('ascii', 'ignore').decode('ascii')
+            logger.error(f"[失败] 未知错误: {error_msg}")
+            return {"success": False, "message": error_msg, "data": None}
 
 
 def load_accounts_from_env() -> List[Dict[str, str]]:
