@@ -8,6 +8,7 @@ CodeBuddy 自动签到脚本
 """
 
 import os
+import sys
 import time
 import logging
 from typing import List, Dict, Optional
@@ -15,11 +16,16 @@ import requests
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 
-# 配置日志
+# 强制使用 UTF-8 编码（解决 GitHub Actions 环境编码问题）
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
+
+# 配置日志（强制 UTF-8）
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    datefmt='%Y-%m-%d %H:%M:%S',
+    stream=sys.stdout  # 显式指定输出流
 )
 logger = logging.getLogger(__name__)
 
