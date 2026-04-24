@@ -87,6 +87,15 @@ class CodeBuddyCheckin:
 
             # 检查响应状态
             if response.status_code == 200:
+                # 检查是否返回了登录页面（Cookie 失效）
+                if '<!DOCTYPE html>' in response.text or 'login' in response.text.lower():
+                    logger.error("[失败] Cookie 已失效，请重新获取！")
+                    return {
+                        "success": False,
+                        "message": "Cookie 已失效",
+                        "data": None
+                    }
+
                 result = response.json()
                 logger.info(f"[成功] 签到成功！响应: {result}")
                 return {
