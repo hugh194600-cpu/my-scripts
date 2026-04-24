@@ -85,10 +85,14 @@ class CodeBuddyCheckin:
                 timeout=TIMEOUT
             )
 
+            # 强制指定编码为 UTF-8（避免 requests 默认使用 latin-1）
+            response.encoding = 'utf-8'
+
             # 检查响应状态
             if response.status_code == 200:
                 # 检查是否返回了登录页面（Cookie 失效）
-                if '<!DOCTYPE html>' in response.text or 'login' in response.text.lower():
+                response_text = response.text
+                if '<!DOCTYPE html>' in response_text or 'login' in response_text.lower():
                     logger.error("[失败] Cookie 已失效，请重新获取！")
                     return {
                         "success": False,
@@ -104,7 +108,7 @@ class CodeBuddyCheckin:
                     "data": result
                 }
             else:
-                logger.error(f"[失败] 签到失败！状态码: {response.status_code}, 响应: {response.text}")
+                logger.error(f"[失败] 签到失败！状态码: {response.status_code}")
                 return {
                     "success": False,
                     "message": f"HTTP {response.status_code}",
