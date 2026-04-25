@@ -73,7 +73,8 @@ class CodeBuddyCheckin:
 
     def __init__(self, cookie: str, user_id: str):
         self.cookie = cookie
-        self.user_id = user_id
+        # 去除可能的 BOM 字符（\ufeff 等）
+        self.user_id = user_id.strip().replace('\ufeff', '').replace('\ufffe', '')
         self.session = self._create_session()
 
     def _create_session(self) -> requests.Session:
