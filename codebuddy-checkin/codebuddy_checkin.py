@@ -20,34 +20,32 @@ sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
 
 
-def safe_str(msg: str) -> str:
-    """将字符串转换为 ASCII 安全格式（避免编码错误）"""
-    if not msg:
-        return msg
-    # 方法1：忽略非ASCII字符
-    return msg.encode('ascii', 'ignore').decode('ascii')
+def safe_repr(obj) -> str:
+    """安全获取对象的 repr 表示（ASCII 安全，避免编码错误）"""
+    try:
+        # repr() 会自动转义非 ASCII 字符，保证输出是 ASCII 安全的
+        return repr(obj)
+    except:
+        return "<unrepresentable>"
 
 
-def log_info(msg: str):
+def log_info(msg):
     """打印 INFO 日志（避免 logging 模块编码问题）"""
     timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-    # 使用 ASCII 安全格式输出
-    safe_msg = safe_str(msg)
-    print(f"{timestamp} - INFO - {safe_msg}", flush=True)
+    # 使用 repr() 保证输出是 ASCII 安全的
+    print(f"{timestamp} - INFO - {safe_repr(msg)}", flush=True)
 
 
-def log_error(msg: str):
+def log_error(msg):
     """打印 ERROR 日志（避免 logging 模块编码问题）"""
     timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-    safe_msg = safe_str(msg)
-    print(f"{timestamp} - ERROR - {safe_msg}", flush=True)
+    print(f"{timestamp} - ERROR - {safe_repr(msg)}", flush=True)
 
 
-def log_warning(msg: str):
+def log_warning(msg):
     """打印 WARNING 日志（避免 logging 模块编码问题）"""
     timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-    safe_msg = safe_str(msg)
-    print(f"{timestamp} - WARNING - {safe_msg}", flush=True)
+    print(f"{timestamp} - WARNING - {safe_repr(msg)}", flush=True)
 
 
 # 常量配置
