@@ -20,22 +20,34 @@ sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
 
 
+def safe_str(msg: str) -> str:
+    """将字符串转换为 ASCII 安全格式（避免编码错误）"""
+    if not msg:
+        return msg
+    # 方法1：忽略非ASCII字符
+    return msg.encode('ascii', 'ignore').decode('ascii')
+
+
 def log_info(msg: str):
     """打印 INFO 日志（避免 logging 模块编码问题）"""
     timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-    print(f"{timestamp} - INFO - {msg}", flush=True)
+    # 使用 ASCII 安全格式输出
+    safe_msg = safe_str(msg)
+    print(f"{timestamp} - INFO - {safe_msg}", flush=True)
 
 
 def log_error(msg: str):
     """打印 ERROR 日志（避免 logging 模块编码问题）"""
     timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-    print(f"{timestamp} - ERROR - {msg}", flush=True)
+    safe_msg = safe_str(msg)
+    print(f"{timestamp} - ERROR - {safe_msg}", flush=True)
 
 
 def log_warning(msg: str):
     """打印 WARNING 日志（避免 logging 模块编码问题）"""
     timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-    print(f"{timestamp} - WARNING - {msg}", flush=True)
+    safe_msg = safe_str(msg)
+    print(f"{timestamp} - WARNING - {safe_msg}", flush=True)
 
 
 # 常量配置
@@ -114,7 +126,9 @@ class CodeBuddyCheckin:
                 # 尝试解析 JSON
                 try:
                     result = response.json()
-                    log_info(f"[成功] 签到成功！响应: {result}")
+                    # 使用 safe_str 处理 result，避免编码错误
+                    result_str = safe_str(str(result))
+                    log_info(f"[成功] 签到成功！响应: {result_str}")
                     return {
                         "success": True,
                         "message": "签到成功",
@@ -122,15 +136,15 @@ class CodeBuddyCheckin:
                     }
                 except ValueError as json_err:
                     # JSON 解析失败，记录响应内容前 500 字符
-                    log_error(f"[失败] 响应不是有效 JSON: {json_err}")
-                    log_error(f"[失败] 响应内容: {response.text[:500]}")
+                    log_error(f"[失败] 响应不是有效 JSON: {safe_str(str(json_err))}")
+                    log_error(f"[失败] 响应内容: {safe_str(response.text[:500])}")
                     return {
                         "success": False,
                         "message": "响应不是有效 JSON",
                         "data": None
                     }
             else:
-                log_error(f"[失败] 签到失败！状态码: {response.status_code}, 响应: {response.text[:200]}")
+                log_error(f"[失败] 签到失败！状态码: {response.status_code}, 响应: {safe_str(response.text[:200])}")
                 return {
                     "success": False,
                     "message": f"HTTP {response.status_code}",
