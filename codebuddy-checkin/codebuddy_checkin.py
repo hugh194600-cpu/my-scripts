@@ -4,7 +4,7 @@
 CodeBuddy 自动签到脚本
 - 支持多账号
 - 异常重试
-- 详细日志（使用 print，避免 encoding 问题）
+- 详细日志（使用 ASCII 安全输出，避免 encoding 问题）
 """
 
 import os
@@ -16,36 +16,49 @@ from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 
 # 强制使用 UTF-8 编码（解决 GitHub Actions 环境编码问题）
-sys.stdout.reconfigure(encoding='utf-8')
-sys.stderr.reconfigure(encoding='utf-8')
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+except:
+    pass
+
+# 设置环境变量（双重保险）
+os.environ['PYTHONIOENCODING'] = 'utf-8'
 
 
-def safe_repr(obj) -> str:
-    """安全获取对象的 repr 表示（ASCII 安全，避免编码错误）"""
+def safe_ascii(msg) -> str:
+    """将任意对象转换为 ASCII 安全字符串（使用 repr，自动转义非 ASCII 字符）"""
     try:
-        # repr() 会自动转义非 ASCII 字符，保证输出是 ASCII 安全的
-        return repr(obj)
+        return repr(msg)
     except:
-        return "<unrepresentable>"
+        try:
+            return str(msg).encode('ascii', 'ignore').decode('ascii')
+        except:
+            return '<unprintable>'
 
 
 def log_info(msg):
-    """打印 INFO 日志（避免 logging 模块编码问题）"""
+    """打印 INFO 日志"""
     timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-    # 使用 repr() 保证输出是 ASCII 安全的
-    print(f"{timestamp} - INFO - {safe_repr(msg)}", flush=True)
+    output = f"{timestamp} - INFO - {safe_ascii(msg)}\n"
+    sys.stdout.write(output)
+    sys.stdout.flush()
 
 
 def log_error(msg):
-    """打印 ERROR 日志（避免 logging 模块编码问题）"""
+    """打印 ERROR 日志"""
     timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-    print(f"{timestamp} - ERROR - {safe_repr(msg)}", flush=True)
+    output = f"{timestamp} - ERROR - {safe_ascii(msg)}\n"
+    sys.stderr.write(output)
+    sys.stderr.flush()
 
 
 def log_warning(msg):
-    """打印 WARNING 日志（避免 logging 模块编码问题）"""
+    """打印 WARNING 日志"""
     timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-    print(f"{timestamp} - WARNING - {safe_repr(msg)}", flush=True)
+    output = f"{timestamp} - WARNING - {safe_ascii(msg)}\n"
+    sys.stdout.write(output)
+    sys.stdout.flush()
 
 
 # 常量配置
@@ -78,13 +91,14 @@ class CodeBuddyCheckin:
         session.mount("https://", adapter)
         session.mount("http://", adapter)
 
-        # 设置默认请求头
+        # 设置默认请求头（Cookie 可能包含非 ASCII 字符，使用 ASCII 安全方式）
+        cookie_safe = safe_ascii(self.cookie)
         session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36 Edg/147.0.0.0",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Accept": "application/json",
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
             "Referer": "https://www.codebuddy.cn/agents",
-            "Cookie": self.cookie,
+            "Cookie": self.cookie,  # 保留原始 Cookie，requests 会处理编码
             "X-User-Id": self.user_id,
         })
 
@@ -96,15 +110,15 @@ class CodeBuddyCheckin:
         注意：需要根据实际签到接口调整此方法
         """
         try:
-            log_info(f"开始签到... [User: {self.user_id[:8]}...]")
+            log_info(f"Start checkin... [User: {self.user_id[:8]}...]")
 
             # 发送请求
-            log_info(f"请求 URL: {CHECKIN_URL}")
+            log_info(f"Request URL: {CHECKIN_URL}")
             response = self.session.get(
                 CHECKIN_URL,
                 timeout=TIMEOUT
             )
-            log_info(f"响应状态码: {response.status_code}")
+            log_info(f"Response status: {response.status_code}")
 
             # 强制指定编码为 UTF-8（避免 requests 默认使用 latin-1）
             response.encoding = 'utf-8'
@@ -114,35 +128,33 @@ class CodeBuddyCheckin:
                 # 检查是否返回了登录页面（Cookie 失效）
                 response_text = response.text
                 if '<!DOCTYPE html>' in response_text or 'login' in response_text.lower():
-                    log_error("[失败] Cookie 已失效，请重新获取！")
+                    log_error("Failed: Cookie expired, please update!")
                     return {
                         "success": False,
-                        "message": "Cookie 已失效",
+                        "message": "Cookie expired",
                         "data": None
                     }
 
                 # 尝试解析 JSON
                 try:
                     result = response.json()
-                    # 使用 safe_str 处理 result，避免编码错误
-                    result_str = safe_str(str(result))
-                    log_info(f"[成功] 签到成功！响应: {result_str}")
+                    log_info(f"Success: checkin successful! Response: {safe_ascii(result)}")
                     return {
                         "success": True,
-                        "message": "签到成功",
+                        "message": "checkin successful",
                         "data": result
                     }
                 except ValueError as json_err:
                     # JSON 解析失败，记录响应内容前 500 字符
-                    log_error(f"[失败] 响应不是有效 JSON: {safe_str(str(json_err))}")
-                    log_error(f"[失败] 响应内容: {safe_str(response.text[:500])}")
+                    log_error(f"Failed: Invalid JSON response: {safe_ascii(json_err)}")
+                    log_error(f"Failed: Response content: {safe_ascii(response.text[:500])}")
                     return {
                         "success": False,
-                        "message": "响应不是有效 JSON",
+                        "message": "Invalid JSON response",
                         "data": None
                     }
             else:
-                log_error(f"[失败] 签到失败！状态码: {response.status_code}, 响应: {safe_str(response.text[:200])}")
+                log_error(f"Failed: HTTP {response.status_code}, Response: {safe_ascii(response.text[:200])}")
                 return {
                     "success": False,
                     "message": f"HTTP {response.status_code}",
@@ -150,30 +162,24 @@ class CodeBuddyCheckin:
                 }
 
         except requests.exceptions.Timeout:
-            log_error("[失败] 请求超时")
-            return {"success": False, "message": "请求超时", "data": None}
+            log_error("Failed: Request timeout")
+            return {"success": False, "message": "Request timeout", "data": None}
 
         except requests.exceptions.RequestException as e:
             # 安全处理错误信息（避免编码问题）
-            error_msg = str(e).encode('ascii', 'ignore').decode('ascii')
-            log_error(f"[失败] 请求异常: {error_msg}")
-            return {"success": False, "message": error_msg, "data": None}
+            log_error(f"Failed: Request exception: {safe_ascii(e)}")
+            return {"success": False, "message": safe_ascii(e), "data": None}
 
         except Exception as e:
             # 安全处理错误信息（避免编码问题）
-            error_msg = str(e).encode('ascii', 'ignore').decode('ascii')
-            log_error(f"[失败] 未知错误: {error_msg}")
-            return {"success": False, "message": error_msg, "data": None}
+            log_error(f"Failed: Unknown error: {safe_ascii(e)}")
+            return {"success": False, "message": safe_ascii(e), "data": None}
 
 
 def load_accounts_from_env() -> List[Dict[str, str]]:
     """
     从环境变量加载账号信息
     支持单账号和多账号配置
-
-    环境变量格式：
-    - 单账号：CODEBUDDY_COOKIE, CODEBUDDY_USER_ID
-    - 多账号：CODEBUDDY_ACCOUNTS (JSON 格式)
     """
     accounts = []
 
@@ -183,10 +189,10 @@ def load_accounts_from_env() -> List[Dict[str, str]]:
         try:
             import json
             accounts = json.loads(multi_accounts)
-            log_info(f"已加载 {len(accounts)} 个账号（多账号模式）")
+            log_info(f"Loaded {len(accounts)} accounts (multi-account mode)")
             return accounts
         except json.JSONDecodeError as e:
-            log_error(f"多账号配置 JSON 解析失败: {e}")
+            log_error(f"Multi-account config JSON parse failed: {safe_ascii(e)}")
 
     # 单账号模式
     cookie = os.getenv("CODEBUDDY_COOKIE")
@@ -197,9 +203,9 @@ def load_accounts_from_env() -> List[Dict[str, str]]:
             "cookie": cookie,
             "user_id": user_id
         })
-        log_info("已加载 1 个账号（单账号模式）")
+        log_info("Loaded 1 account (single-account mode)")
     else:
-        log_warning("未找到账号配置，请检查环境变量")
+        log_warning("No account config found, please check environment variables")
 
     return accounts
 
@@ -207,22 +213,23 @@ def load_accounts_from_env() -> List[Dict[str, str]]:
 def main():
     """主函数"""
     log_info("=" * 60)
-    log_info("CodeBuddy 自动签到脚本启动")
+    log_info("CodeBuddy Auto Checkin Script Started")
     log_info("=" * 60)
 
     # 加载账号
     accounts = load_accounts_from_env()
 
     if not accounts:
-        log_error("❌ 没有找到任何账号配置，退出")
+        log_error("No account config found, exit")
         exit(1)
 
     # 遍历所有账号执行签到
     results = []
     for idx, account in enumerate(accounts, 1):
-        log_info(f"\n{'=' * 60}")
-        log_info(f"处理账号 {idx}/{len(accounts)}")
-        log_info(f"{'=' * 60}")
+        log_info("")
+        log_info("=" * 60)
+        log_info(f"Processing account {idx}/{len(accounts)}")
+        log_info("=" * 60)
 
         checkin = CodeBuddyCheckin(
             cookie=account["cookie"],
@@ -237,13 +244,14 @@ def main():
             time.sleep(2)
 
     # 汇总结果
-    log_info(f"\n{'=' * 60}")
-    log_info("签到任务完成 - 结果汇总")
-    log_info(f"{'=' * 60}")
+    log_info("")
+    log_info("=" * 60)
+    log_info("Checkin Task Completed - Summary")
+    log_info("=" * 60)
     success_count = sum(1 for r in results if r["success"])
-    log_info(f"总计: {len(results)} 个账号")
-    log_info(f"成功: {success_count} 个")
-    log_info(f"失败: {len(results) - success_count} 个")
+    log_info(f"Total: {len(results)} accounts")
+    log_info(f"Success: {success_count}")
+    log_info(f"Failed: {len(results) - success_count}")
 
     # 如果有失败，退出码设为 1（便于 GitHub Actions 识别）
     if success_count < len(results):
